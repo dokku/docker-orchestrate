@@ -94,6 +94,18 @@ func runStopCommand(ctx context.Context, input RunStopCommandInput) error {
 	})
 }
 
+// runPostStopCommand runs the post-stop command for a container
+func runPostStopCommand(ctx context.Context, input RunStopCommandInput) error {
+	return runScript(ctx, runScriptInput{
+		Client:      input.Client,
+		ContainerID: input.ContainerID,
+		Executor:    input.Executor,
+		ServiceName: input.ServiceName,
+		Script:      input.StopCommand,
+		ScriptType:  "post-stop",
+	})
+}
+
 // waitForDockerHealthCheck waits for a container to become healthy
 func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput) error {
 	if input.Monitor == 0 {

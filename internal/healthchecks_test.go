@@ -99,6 +99,74 @@ func TestRunStopCommand(t *testing.T) {
 	}
 }
 
+func TestRunPostStopCommand(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name            string
+		postStopCommand string
+		expectError     bool
+	}{
+		{
+			name:            "successful_post_stop_command",
+			postStopCommand: "echo 'stopped'",
+			expectError:     false,
+		},
+		{
+			name:            "failing_post_stop_command",
+			postStopCommand: "exit 1",
+			expectError:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockDockerClient{
+				containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							ID: id,
+							State: &container.State{
+								Running: false,
+							},
+							HostConfig: &container.HostConfig{
+								NetworkMode: "bridge",
+							},
+						},
+						NetworkSettings: &container.NetworkSettings{
+							Networks: map[string]*network.EndpointSettings{
+								"bridge": {
+									IPAddress: "172.17.0.2",
+								},
+							},
+						},
+					}, nil
+				},
+			}
+
+			executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				if tt.postStopCommand == "exit 1" {
+					return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("command failed")
+				}
+				return ExecCommandResponse{ExitCode: 0}, nil
+			}
+
+			input := RunStopCommandInput{
+				Client:      mockClient,
+				ContainerID: "test-container-id-123456",
+				Executor:    executor,
+				ServiceName: "test-service",
+				StopCommand: tt.postStopCommand,
+			}
+
+			err := runPostStopCommand(ctx, input)
+			if (err != nil) != tt.expectError {
+				t.Errorf("runPostStopCommand() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
+	}
+}
+
 func TestWaitForScriptHealthcheck(t *testing.T) {
 	ctx := context.Background()
 

@@ -179,12 +179,16 @@ func DeployService(input DeployServiceInput) error {
 
 	healthcheckCommand := ""
 	stopCommand := ""
+	postStopCommand := ""
 	if updateConfig.Extensions != nil {
 		if cmd, ok := updateConfig.Extensions["x-healthcheck-command"].(string); ok {
 			healthcheckCommand = cmd
 		}
 		if cmd, ok := updateConfig.Extensions["x-stop-command"].(string); ok {
 			stopCommand = cmd
+		}
+		if cmd, ok := updateConfig.Extensions["x-post-stop-command"].(string); ok {
+			postStopCommand = cmd
 		}
 	}
 
@@ -220,6 +224,7 @@ func DeployService(input DeployServiceInput) error {
 			ProjectName:       input.ProjectName,
 			ServiceName:       input.ServiceName,
 			StopCommand:       stopCommand,
+			PostStopCommand:   postStopCommand,
 		})
 		if err != nil {
 			return err
@@ -266,6 +271,7 @@ func DeployService(input DeployServiceInput) error {
 			ProjectName:        input.ProjectName,
 			ServiceName:        input.ServiceName,
 			StopCommand:        stopCommand,
+			PostStopCommand:    postStopCommand,
 		})
 		if err != nil {
 			return fmt.Errorf("error rolling update containers: %v", err)
@@ -303,6 +309,7 @@ func DeployService(input DeployServiceInput) error {
 			ProjectName:        input.ProjectName,
 			ServiceName:        input.ServiceName,
 			StopCommand:        stopCommand,
+			PostStopCommand:    postStopCommand,
 		})
 		if err != nil {
 			return err

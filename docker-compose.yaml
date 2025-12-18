@@ -18,3 +18,8 @@ services:
           echo "This can be used to interact with the container before it is stopped by the docker api"
           echo 'Stop command running on host'
           exit 0
+        x-post-stop-command: |
+          echo "This can be used to interact with the container after it is stopped by the docker api"
+          echo "It can also be used to update other systems that are tracking containers within the docker compose project"
+          echo 'Post-stop command running on host'
+          exit 0

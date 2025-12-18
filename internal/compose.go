@@ -146,6 +146,8 @@ type RollingUpdateInput struct {
 	Sleeper func(time.Duration)
 	// StopCommand is the command to run before stopping a container
 	StopCommand string
+	// PostStopCommand is the command to run after stopping a container
+	PostStopCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -323,6 +325,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					StopCommand: input.StopCommand,
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
+				_ = runPostStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: newContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.PostStopCommand,
+				})
 
 				// We don't return error here because we want to continue with others in batch
 				// but we check failure ratio later
@@ -352,6 +361,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
 					input.Logger.Output(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
+				_ = runPostStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: oldContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.PostStopCommand,
+				})
 			} else {
 				input.Logger.Output(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
 			}
@@ -400,7 +416,15 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				ServiceName: input.ServiceName,
 				StopCommand: input.StopCommand,
 			})
-			return input.Client.ContainerTerminate(stopCtx, containerID)
+			err := input.Client.ContainerTerminate(stopCtx, containerID)
+			_ = runPostStopCommand(stopCtx, RunStopCommandInput{
+				Client:      input.Client,
+				ContainerID: containerID,
+				Executor:    input.Executor,
+				ServiceName: input.ServiceName,
+				StopCommand: input.PostStopCommand,
+			})
+			return err
 		})
 	}
 
@@ -514,6 +538,13 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 					StopCommand: input.StopCommand,
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
+				_ = runPostStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: newContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.PostStopCommand,
+				})
 				return
 			}
 			input.Logger.Output(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
@@ -560,6 +591,8 @@ type ScaleDownContainersInput struct {
 	ServiceName string
 	// StopCommand is the command to run before stopping a container
 	StopCommand string
+	// PostStopCommand is the command to run after stopping a container
+	PostStopCommand string
 }
 
 // scaleDownContainers scales down containers by stopping and removing excess ones
@@ -602,6 +635,13 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
+		_ = runPostStopCommand(ctx, RunStopCommandInput{
+			Client:      input.Client,
+			ContainerID: container.ID,
+			Executor:    executor,
+			ServiceName: input.ServiceName,
+			StopCommand: input.PostStopCommand,
+		})
 	}
 
 	return nil
@@ -643,6 +683,8 @@ type ScaleUpContainersInput struct {
 	ServiceName string
 	// StopCommand is the command to run before stopping a container
 	StopCommand string
+	// PostStopCommand is the command to run after stopping a container
+	PostStopCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -773,6 +815,13 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						StopCommand: input.StopCommand,
 					})
 					_ = input.Client.ContainerTerminate(ctx, c.ID)
+					_ = runPostStopCommand(ctx, RunStopCommandInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Executor:    executor,
+						ServiceName: input.ServiceName,
+						StopCommand: input.PostStopCommand,
+					})
 				}
 			}(c)
 		}
