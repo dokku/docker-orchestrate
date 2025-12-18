@@ -18,6 +18,7 @@ type DeployCommand struct {
 	projectDirectory      string
 	projectName           string
 	containerNameTemplate string
+	replicas              int
 }
 
 func (c *DeployCommand) Name() string {
@@ -65,6 +66,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
+	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	return f
 }
 
@@ -76,6 +78,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 			"--project-directory":       complete.PredictDirs("*"),
 			"--project-name":            complete.PredictAnything,
 			"--container-name-template": complete.PredictAnything,
+			"--replicas":                complete.PredictAnything,
 		},
 	)
 }
@@ -120,6 +123,11 @@ func (c *DeployCommand) Run(args []string) int {
 
 	serviceName := arguments["service-name"].StringValue()
 	if serviceName == "" {
+		if c.replicas > 0 {
+			c.Ui.Error("--replicas flag requires a service name argument")
+			return 1
+		}
+
 		c.Ui.Output(fmt.Sprintf("Deploying entire project from %s", c.file))
 		err = internal.DeployProject(internal.DeployProjectInput{
 			ComposeFile:           c.file,
@@ -132,6 +140,7 @@ func (c *DeployCommand) Run(args []string) int {
 			c.Ui.Error(err.Error())
 			return 1
 		}
+		return 0
 	}
 
 	c.Ui.Output(fmt.Sprintf("Deploying service %s", serviceName))
@@ -141,6 +150,7 @@ func (c *DeployCommand) Run(args []string) int {
 		Logger:                c.Ui,
 		Project:               project,
 		ProjectName:           c.projectName,
+		Replicas:              c.replicas,
 		ServiceName:           serviceName,
 	})
 	if err != nil {

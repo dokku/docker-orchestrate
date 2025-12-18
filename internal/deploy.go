@@ -12,10 +12,14 @@ import (
 
 // DeployProjectInput is the input for the DeployProject function
 type DeployProjectInput struct {
+	// Client is the Docker client to use
+	Client DockerClientInterface
 	// ComposeFile is the path to the compose file
 	ComposeFile string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
+	// Executor is the command executor to use
+	Executor CommandExecutor
 	// Logger is the logger to use
 	Logger cli.Ui
 	// Project is the project configuration
@@ -31,8 +35,10 @@ func DeployProject(input DeployProjectInput) error {
 	for _, service := range input.Project.Services {
 		if service.Name == "web" {
 			err := DeployService(DeployServiceInput{
+				Client:                input.Client,
 				ComposeFile:           input.ComposeFile,
 				ContainerNameTemplate: input.ContainerNameTemplate,
+				Executor:              input.Executor,
 				Logger:                input.Logger,
 				Project:               input.Project,
 				ProjectName:           input.ProjectName,
@@ -49,8 +55,10 @@ func DeployProject(input DeployProjectInput) error {
 		}
 
 		err := DeployService(DeployServiceInput{
+			Client:                input.Client,
 			ComposeFile:           input.ComposeFile,
 			ContainerNameTemplate: input.ContainerNameTemplate,
+			Executor:              input.Executor,
 			Logger:                input.Logger,
 			Project:               input.Project,
 			ProjectName:           input.ProjectName,
@@ -66,16 +74,22 @@ func DeployProject(input DeployProjectInput) error {
 
 // DeployServiceInput is the input for the DeployService function
 type DeployServiceInput struct {
+	// Client is the Docker client to use
+	Client DockerClientInterface
 	// ComposeFile is the path to the compose file
 	ComposeFile string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
+	// Executor is the command executor to use
+	Executor CommandExecutor
 	// Logger is the logger to use
 	Logger cli.Ui
 	// Project is the project configuration
 	Project *types.Project
 	// ProjectName is the name of the project
 	ProjectName string
+	// Replicas is the number of replicas to deploy
+	Replicas int
 	// ServiceName is the name of the service
 	ServiceName string
 }
@@ -110,10 +124,14 @@ func DeployService(input DeployServiceInput) error {
 	}
 
 	// get the number of containers that should be running
-	//   from the `service.[service-name].deploy.replicas` field in the compose file
+	//   from the `input.Replicas` field if specified
+	//   or the `service.[service-name].deploy.replicas` field in the compose file
 	//   or the `service.[service-name].scale` field in the compose file
 	var replicas int
-	if service.Deploy.Replicas != nil {
+	if input.Replicas > 0 {
+		replicas = input.Replicas
+	}
+	if replicas == 0 && service.Deploy.Replicas != nil {
 		replicas = int(*service.Deploy.Replicas)
 	}
 	if replicas == 0 && service.Scale != nil {
@@ -169,15 +187,14 @@ func DeployService(input DeployServiceInput) error {
 	ctx := context.Background()
 	projectDir := filepath.Dir(input.ComposeFile)
 
-	cli, err := NewDockerClient()
-	if err != nil {
-		return err
+	executor := input.Executor
+	if executor == nil {
+		executor = ExecCommand
 	}
-	defer cli.Close()
 
 	// Get current running containers
 	currentContainers, err := composeContainers(ComposeContainersInput{
-		Client:      cli,
+		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
 		Status:      "running",
@@ -189,7 +206,7 @@ func DeployService(input DeployServiceInput) error {
 	// Scale down if needed (before rolling update)
 	if len(currentContainers) > replicas {
 		err := scaleDownContainers(ctx, ScaleDownContainersInput{
-			Client:            cli,
+			Client:            input.Client,
 			ComposeFile:       input.ComposeFile,
 			CurrentContainers: currentContainers,
 			CurrentReplicas:   len(currentContainers),
@@ -205,7 +222,7 @@ func DeployService(input DeployServiceInput) error {
 
 	// refresh the current containers
 	containersToUpdate, err := composeContainers(ComposeContainersInput{
-		Client:      cli,
+		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
 		Status:      "running",
@@ -225,12 +242,13 @@ func DeployService(input DeployServiceInput) error {
 	var rollingUpdateOutput RollingUpdateOutput
 	if len(containersToUpdate) > 0 {
 		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
-			Client:             cli,
+			Client:             input.Client,
 			ComposeFile:        input.ComposeFile,
 			ContainersToUpdate: containersToUpdate,
 			CurrentReplicas:    len(containersToUpdate),
 			Delay:              delay,
 			DesiredReplicas:    replicas,
+			Executor:           executor,
 			FailureAction:      updateConfig.FailureAction,
 			HealthcheckCommand: healthcheckCommand,
 			Logger:             input.Logger,
@@ -249,7 +267,7 @@ func DeployService(input DeployServiceInput) error {
 
 	// Get updated container count after rolling update
 	updatedContainers, err := composeContainers(ComposeContainersInput{
-		Client:      cli,
+		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
 		Status:      "running",
@@ -261,11 +279,12 @@ func DeployService(input DeployServiceInput) error {
 	// Scale up if needed (only after existing containers are replaced)
 	if len(updatedContainers) < replicas {
 		err := scaleUpContainers(ctx, ScaleUpContainersInput{
-			Client:             cli,
+			Client:             input.Client,
 			ComposeFile:        input.ComposeFile,
 			CurrentReplicas:    len(updatedContainers),
 			Delay:              delay,
 			DesiredReplicas:    replicas,
+			Executor:           executor,
 			ExistingContainers: updatedContainers,
 			FailureAction:      string(updateConfig.FailureAction),
 			HealthcheckCommand: healthcheckCommand,
@@ -284,7 +303,7 @@ func DeployService(input DeployServiceInput) error {
 
 	// Get final container count
 	finalContainers, err := composeContainers(ComposeContainersInput{
-		Client:      cli,
+		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
 		Status:      "running",
@@ -295,7 +314,7 @@ func DeployService(input DeployServiceInput) error {
 
 	// Rename all containers to follow the naming convention
 	err = renameContainersToConvention(ctx, RenameContainersToConventionInput{
-		Client:       cli,
+		Client:       input.Client,
 		Containers:   finalContainers,
 		ProjectName:  input.ProjectName,
 		ServiceName:  input.ServiceName,

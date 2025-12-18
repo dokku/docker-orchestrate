@@ -2,13 +2,9 @@
 
 A Docker CLI plugin to deploy Docker Compose services with support for rolling updates, custom healthchecks, and container naming conventions.
 
-## Features
+## Why
 
-- Rolling updates with start-first or stop-first strategies.
-- Batch processing of container updates with configurable parallelism.
-- Script-based healthchecks via Docker Compose extensions.
-- Automated container renaming using Go templates.
-- Native integration with the Docker CLI.
+Docker Compose is often used as a way to deploy workloads on single servers, but does not natively support rolling restarts, despite [support in the specification](https://docs.docker.com/reference/compose-file/deploy/). This tool aims to fill that gap by implementing the `deploy.update_config` against a locally run `docker compose` project.
 
 ## Installation
 
@@ -18,7 +14,7 @@ To install as a Docker CLI plugin, build the binary and move it to your Docker p
 make install
 ```
 
-Once installed, the tool is available via `docker orchestrate`.
+Once installed, this plugin is available via `docker orchestrate`.
 
 ## Usage
 
@@ -34,6 +30,12 @@ Deploy a specific service:
 docker orchestrate deploy web
 ```
 
+Deploy a service with a specific number of replicas:
+
+```bash
+docker orchestrate deploy web --replicas 5
+```
+
 ### Arguments
 
 - `service-name`: The name of a service in the compose file to deploy
@@ -44,10 +46,11 @@ docker orchestrate deploy web
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
 - `--project-directory`: Specify an alternate working directory.
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
+- `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
 
 ## Script Healthchecks
 
-The tool supports an extended healthcheck mechanism via the `x-healthcheck-command` field within the `update_config` section of a service.
+In addition to native healthchecks, `docker-orchestrate` supports an extended healthcheck mechanism via the `x-healthcheck-command` field within the `update_config` section of a service.
 
 ```yaml
 services:
@@ -72,7 +75,7 @@ The script healthcheck runs after the standard Docker healthcheck (if defined) s
 
 ## Caveats
 
-- **Single-node focus**: This tool is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
+- **Single-node focus**: `docker orchestrate` is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
 - **Script healthcheck locality**: The `x-healthcheck-command` script is executed on the host machine where the `docker orchestrate` command is run, not within the container itself. Use the `HEALTHCHECK` directive to run healthchecks within a container.
 - **Network connectivity**: For script healthchecks that rely on `.ContainerIP`, the host machine must have direct network access to the container's IP address (e.g., via the Docker bridge network).
-- **Failure Action**: Currently, only the `pause` `failure_action` is supported. Other `failure_action` values will cause this tool to exit non-zero. If a deployment fails, the tool will stop and leave the system in its current state.
+- **Failure Action**: Currently, only the `pause` `failure_action` is supported. Other `failure_action` values will cause `docker orchestrate` to exit non-zero. If a deployment fails, `docker orchestrate` will stop and leave the system in its current state.
