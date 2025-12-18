@@ -144,10 +144,10 @@ type RollingUpdateInput struct {
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
 	Sleeper func(time.Duration)
-	// PreStopCommand is the command to run before stopping a container
-	PreStopCommand string
-	// PostStopCommand is the command to run after stopping a container
-	PostStopCommand string
+	// PreStopHostCommand is the command to run before stopping a container
+	PreStopHostCommand string
+	// PostStopHostCommand is the command to run after stopping a container
+	PostStopHostCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -317,20 +317,22 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				mu.Unlock()
 
 				// Clean up failed container
-				_ = runPreStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PreStopCommand,
+					Script:      input.PreStopHostCommand,
+					ScriptType:  "pre-stop",
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
-				_ = runPostStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PostStopCommand,
+					Script:      input.PostStopHostCommand,
+					ScriptType:  "post-stop",
 				})
 
 				// We don't return error here because we want to continue with others in batch
@@ -351,22 +353,24 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				}
 
 				input.Logger.Output(fmt.Sprintf("Container %s is healthy, stopping %s", newContainer.ID[:12], oldContainerIdentifier))
-				_ = runPreStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: oldContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PreStopCommand,
+					Script:      input.PreStopHostCommand,
+					ScriptType:  "pre-stop",
 				})
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
 					input.Logger.Output(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
-				_ = runPostStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: oldContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PostStopCommand,
+					Script:      input.PostStopHostCommand,
+					ScriptType:  "post-stop",
 				})
 			} else {
 				input.Logger.Output(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
@@ -409,20 +413,22 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 		}
 		g.Go(func() error {
 			input.Logger.Output(fmt.Sprintf("Stopping container %s", containerIdentifier))
-			_ = runPreStopCommand(stopCtx, RunStopCommandInput{
+			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
 				Executor:    input.Executor,
 				ServiceName: input.ServiceName,
-				Script:      input.PreStopCommand,
+				Script:      input.PreStopHostCommand,
+				ScriptType:  "pre-stop",
 			})
 			err := input.Client.ContainerTerminate(stopCtx, containerID)
-			_ = runPostStopCommand(stopCtx, RunStopCommandInput{
+			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
 				Executor:    input.Executor,
 				ServiceName: input.ServiceName,
-				Script:      input.PostStopCommand,
+				Script:      input.PostStopHostCommand,
+				ScriptType:  "post-stop",
 			})
 			return err
 		})
@@ -444,6 +450,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 		return fmt.Errorf("error getting current containers: %v", err)
 	}
 
+	// Start new containers
 	targetScale := len(currentContainers) + len(batch)
 	_, err = input.Executor(ctx, ExecCommandInput{
 		Command: "docker",
@@ -530,20 +537,22 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				output.Failures++
 				mu.Unlock()
 
-				_ = runPreStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PreStopCommand,
+					Script:      input.PreStopHostCommand,
+					ScriptType:  "pre-stop",
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
-				_ = runPostStopCommand(ctx, RunStopCommandInput{
+				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
 					Executor:    input.Executor,
 					ServiceName: input.ServiceName,
-					Script:      input.PostStopCommand,
+					Script:      input.PostStopHostCommand,
+					ScriptType:  "post-stop",
 				})
 				return
 			}
@@ -589,10 +598,10 @@ type ScaleDownContainersInput struct {
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
-	// PreStopCommand is the command to run before stopping a container
-	PreStopCommand string
-	// PostStopCommand is the command to run after stopping a container
-	PostStopCommand string
+	// PreStopHostCommand is the command to run before stopping a container
+	PreStopHostCommand string
+	// PostStopHostCommand is the command to run after stopping a container
+	PostStopHostCommand string
 }
 
 // scaleDownContainers scales down containers by stopping and removing excess ones
@@ -625,22 +634,24 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 			executor = ExecCommand
 		}
 
-		_ = runPreStopCommand(ctx, RunStopCommandInput{
+		_ = runHostScript(ctx, runScriptInput{
 			Client:      input.Client,
 			ContainerID: container.ID,
 			Executor:    executor,
 			ServiceName: input.ServiceName,
-			Script:      input.PreStopCommand,
+			Script:      input.PreStopHostCommand,
+			ScriptType:  "pre-stop",
 		})
 		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
-		_ = runPostStopCommand(ctx, RunStopCommandInput{
+		_ = runHostScript(ctx, runScriptInput{
 			Client:      input.Client,
 			ContainerID: container.ID,
 			Executor:    executor,
 			ServiceName: input.ServiceName,
-			Script:      input.PostStopCommand,
+			Script:      input.PostStopHostCommand,
+			ScriptType:  "post-stop",
 		})
 	}
 
@@ -681,10 +692,10 @@ type ScaleUpContainersInput struct {
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
-	// PreStopCommand is the command to run before stopping a container
-	PreStopCommand string
-	// PostStopCommand is the command to run after stopping a container
-	PostStopCommand string
+	// PreStopHostCommand is the command to run before stopping a container
+	PreStopHostCommand string
+	// PostStopHostCommand is the command to run after stopping a container
+	PostStopHostCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -807,20 +818,22 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					}
 					mu.Unlock()
 
-					_ = runPreStopCommand(ctx, RunStopCommandInput{
+					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
 						Executor:    executor,
 						ServiceName: input.ServiceName,
-						Script:      input.PreStopCommand,
+						Script:      input.PreStopHostCommand,
+						ScriptType:  "pre-stop",
 					})
 					_ = input.Client.ContainerTerminate(ctx, c.ID)
-					_ = runPostStopCommand(ctx, RunStopCommandInput{
+					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
 						Executor:    executor,
 						ServiceName: input.ServiceName,
-						Script:      input.PostStopCommand,
+						Script:      input.PostStopHostCommand,
+						ScriptType:  "post-stop",
 					})
 				}
 			}(c)

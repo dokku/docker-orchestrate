@@ -65,7 +65,14 @@ func waitForHealthcheck(ctx context.Context, input WaitForHealthcheckInput) erro
 		return err
 	}
 
-	return waitForScriptHealthcheck(ctx, input)
+	return runHostScript(ctx, runScriptInput{
+		Client:      input.Client,
+		ContainerID: input.ContainerID,
+		Executor:    input.Executor,
+		ServiceName: input.ServiceName,
+		Script:      input.HealthcheckCommand,
+		ScriptType:  "healthcheck",
+	})
 }
 
 // RunStopCommandInput is the input for the stop command functions
@@ -80,30 +87,6 @@ type RunStopCommandInput struct {
 	ServiceName string
 	// Script is the command to run
 	Script string
-}
-
-// runPreStopCommand runs the pre-stop command for a container
-func runPreStopCommand(ctx context.Context, input RunStopCommandInput) error {
-	return runScript(ctx, runScriptInput{
-		Client:      input.Client,
-		ContainerID: input.ContainerID,
-		Executor:    input.Executor,
-		ServiceName: input.ServiceName,
-		Script:      input.Script,
-		ScriptType:  "pre-stop",
-	})
-}
-
-// runPostStopCommand runs the post-stop command for a container
-func runPostStopCommand(ctx context.Context, input RunStopCommandInput) error {
-	return runScript(ctx, runScriptInput{
-		Client:      input.Client,
-		ContainerID: input.ContainerID,
-		Executor:    input.Executor,
-		ServiceName: input.ServiceName,
-		Script:      input.Script,
-		ScriptType:  "post-stop",
-	})
 }
 
 // waitForDockerHealthCheck waits for a container to become healthy
@@ -160,18 +143,6 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 	}
 }
 
-// waitForScriptHealthcheck waits for a script based health check to become healthy
-func waitForScriptHealthcheck(ctx context.Context, input WaitForHealthcheckInput) error {
-	return runScript(ctx, runScriptInput{
-		Client:      input.Client,
-		ContainerID: input.ContainerID,
-		Executor:    input.Executor,
-		ServiceName: input.ServiceName,
-		Script:      input.HealthcheckCommand,
-		ScriptType:  "healthcheck",
-	})
-}
-
 type runScriptInput struct {
 	Client      DockerClientInterface
 	ContainerID string
@@ -181,7 +152,7 @@ type runScriptInput struct {
 	ScriptType  string
 }
 
-func runScript(ctx context.Context, input runScriptInput) error {
+func runHostScript(ctx context.Context, input runScriptInput) error {
 	if input.Script == "" {
 		return nil
 	}
@@ -204,11 +175,16 @@ func runScript(ctx context.Context, input runScriptInput) error {
 		return fmt.Errorf("error getting container IP: %v", err)
 	}
 
+	containerShortID := input.ContainerID
+	if len(containerShortID) > 12 {
+		containerShortID = containerShortID[:12]
+	}
+
 	var commandBuf bytes.Buffer
 	data := ScriptTemplateData{
 		ContainerID:      input.ContainerID,
 		ContainerIP:      containerIP,
-		ContainerShortID: input.ContainerID[:12],
+		ContainerShortID: containerShortID,
 		ServiceName:      input.ServiceName,
 	}
 
@@ -247,7 +223,7 @@ func runScript(ctx context.Context, input runScriptInput) error {
 	})
 	if err != nil {
 		return &ErrorWithOutput{
-			Err:    fmt.Errorf("%s command failed for container %s: %v", input.ScriptType, input.ContainerID[:12], err),
+			Err:    fmt.Errorf("%s command failed for container %s: %v", input.ScriptType, containerShortID, err),
 			Output: strings.TrimSpace(output.String()),
 		}
 	}
@@ -262,11 +238,11 @@ func getContainerIP(ctx context.Context, client DockerClientInterface, container
 	}
 
 	containerIP := ""
-	if containerJSON.HostConfig.NetworkMode.IsHost() {
+	if containerJSON.ContainerJSONBase != nil && containerJSON.HostConfig != nil && containerJSON.HostConfig.NetworkMode.IsHost() {
 		containerIP = "127.0.0.1"
-	} else {
+	} else if containerJSON.NetworkSettings != nil {
 		for networkName, network := range containerJSON.NetworkSettings.Networks {
-			if networkName != containerJSON.HostConfig.NetworkMode.NetworkName() {
+			if containerJSON.ContainerJSONBase != nil && containerJSON.HostConfig != nil && networkName != containerJSON.HostConfig.NetworkMode.NetworkName() {
 				continue
 			}
 			if network.IPAddress != "" {

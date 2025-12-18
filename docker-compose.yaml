@@ -11,15 +11,20 @@ services:
         monitor: 5s
         max_failure_ratio: 0.1
         order: start-first
-        x-healthcheck-command: |
+        x-healthcheck-host-command: |
           echo "Healthcheck for container {{ .ContainerShortID }} failed!" >&2
           exit 0
-        x-pre-stop-command: |
+        x-pre-stop-host-command: |
           echo "This can be used to interact with the container before it is stopped by the docker api"
           echo 'Stop command running on host'
           exit 0
-        x-post-stop-command: |
+        x-post-stop-host-command: |
           echo "This can be used to interact with the container after it is stopped by the docker api"
           echo "It can also be used to update other systems that are tracking containers within the docker compose project"
           echo 'Post-stop command running on host'
+          exit 0
+        x-post-start-command: |
+          echo "This can be used to interact with the container after it is started by the docker api"
+          echo "It can also be used to update other systems that are tracking containers within the docker compose project"
+          echo 'Post-start command running on host'
           exit 0
