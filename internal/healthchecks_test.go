@@ -322,8 +322,10 @@ func TestRunHostScript(t *testing.T) {
 
 	t.Run("missing client", func(t *testing.T) {
 		input := runScriptInput{
-			Script:   "echo hello",
-			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
+			Script: "echo hello",
+			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				return ExecCommandResponse{}, nil
+			},
 		}
 		err := runHostScript(ctx, input)
 		if err == nil || !strings.Contains(err.Error(), "client is required") {
@@ -344,9 +346,11 @@ func TestRunHostScript(t *testing.T) {
 
 	t.Run("invalid template", func(t *testing.T) {
 		input := runScriptInput{
-			Client:   &mockDockerClient{},
-			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
-			Script:   "echo {{.Invalid}}",
+			Client: &mockDockerClient{},
+			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				return ExecCommandResponse{}, nil
+			},
+			Script: "echo {{.Invalid}}",
 		}
 		err := runHostScript(ctx, input)
 		if err == nil || !strings.Contains(err.Error(), "error parsing") {
@@ -362,8 +366,10 @@ func TestRunHostScript(t *testing.T) {
 			},
 		}
 		input := runScriptInput{
-			Client:      mockClient,
-			Executor:    func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
+			Client: mockClient,
+			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				return ExecCommandResponse{}, nil
+			},
 			Script:      "echo hello",
 			ContainerID: "test-id",
 		}
