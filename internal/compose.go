@@ -82,6 +82,10 @@ type ComposeContainersInput struct {
 
 // composeContainers returns detailed information about containers
 func composeContainers(input ComposeContainersInput) ([]container.Summary, error) {
+	if input.Client == nil {
+		return nil, fmt.Errorf("client is required")
+	}
+
 	ctx := context.Background()
 
 	// Build filters for container labels
@@ -140,6 +144,8 @@ type RollingUpdateInput struct {
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
 	Sleeper func(time.Duration)
+	// StopCommand is the command to run before stopping a container
+	StopCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -309,6 +315,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				mu.Unlock()
 
 				// Clean up failed container
+				_ = runStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: newContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.StopCommand,
+				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
 
 				// We don't return error here because we want to continue with others in batch
@@ -329,6 +342,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				}
 
 				input.Logger.Output(fmt.Sprintf("Container %s is healthy, stopping %s", newContainer.ID[:12], oldContainerIdentifier))
+				_ = runStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: oldContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.StopCommand,
+				})
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
 					input.Logger.Output(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
@@ -373,6 +393,13 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 		}
 		g.Go(func() error {
 			input.Logger.Output(fmt.Sprintf("Stopping container %s", containerIdentifier))
+			_ = runStopCommand(stopCtx, RunStopCommandInput{
+				Client:      input.Client,
+				ContainerID: containerID,
+				Executor:    input.Executor,
+				ServiceName: input.ServiceName,
+				StopCommand: input.StopCommand,
+			})
 			return input.Client.ContainerTerminate(stopCtx, containerID)
 		})
 	}
@@ -479,6 +506,13 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				output.Failures++
 				mu.Unlock()
 
+				_ = runStopCommand(ctx, RunStopCommandInput{
+					Client:      input.Client,
+					ContainerID: newContainer.ID,
+					Executor:    input.Executor,
+					ServiceName: input.ServiceName,
+					StopCommand: input.StopCommand,
+				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
 				return
 			}
@@ -516,12 +550,16 @@ type ScaleDownContainersInput struct {
 	CurrentReplicas int
 	// DesiredReplicas is the target number of replicas
 	DesiredReplicas int
+	// Executor is the command executor to use. If nil, ExecCommand will be used.
+	Executor CommandExecutor
 	// Logger is the logger to use
 	Logger mcli.Ui
 	// ProjectName is the name of the project
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
+	// StopCommand is the command to run before stopping a container
+	StopCommand string
 }
 
 // scaleDownContainers scales down containers by stopping and removing excess ones
@@ -548,6 +586,19 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 			}
 		}
 		input.Logger.Output(fmt.Sprintf("Stopping container %s", containerIdentifier))
+
+		executor := input.Executor
+		if executor == nil {
+			executor = ExecCommand
+		}
+
+		_ = runStopCommand(ctx, RunStopCommandInput{
+			Client:      input.Client,
+			ContainerID: container.ID,
+			Executor:    executor,
+			ServiceName: input.ServiceName,
+			StopCommand: input.StopCommand,
+		})
 		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
@@ -590,6 +641,8 @@ type ScaleUpContainersInput struct {
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
+	// StopCommand is the command to run before stopping a container
+	StopCommand string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -711,6 +764,15 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						batchErr = fmt.Errorf("container %s failed health check: %v", c.ID[:12], err)
 					}
 					mu.Unlock()
+
+					_ = runStopCommand(ctx, RunStopCommandInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Executor:    executor,
+						ServiceName: input.ServiceName,
+						StopCommand: input.StopCommand,
+					})
+					_ = input.Client.ContainerTerminate(ctx, c.ID)
 				}
 			}(c)
 		}

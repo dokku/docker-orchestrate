@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,79 @@ func TestErrorWithOutput(t *testing.T) {
 	}
 	if err.Output != "some output" {
 		t.Errorf("expected 'some output', got '%s'", err.Output)
+	}
+}
+
+func TestRunStopCommand(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		stopCommand string
+		expectError bool
+	}{
+		{
+			name:        "successful_stop_command",
+			stopCommand: "echo 'stopping'",
+			expectError: false,
+		},
+		{
+			name:        "failing_stop_command",
+			stopCommand: "exit 1",
+			expectError: true,
+		},
+		{
+			name:        "no_stop_command",
+			stopCommand: "",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockDockerClient{
+				containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							ID: id,
+							State: &container.State{
+								Running: true,
+							},
+							HostConfig: &container.HostConfig{
+								NetworkMode: "bridge",
+							},
+						},
+						NetworkSettings: &container.NetworkSettings{
+							Networks: map[string]*network.EndpointSettings{
+								"bridge": {
+									IPAddress: "172.17.0.2",
+								},
+							},
+						},
+					}, nil
+				},
+			}
+
+			executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				if tt.stopCommand == "exit 1" {
+					return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("command failed")
+				}
+				return ExecCommandResponse{ExitCode: 0}, nil
+			}
+
+			input := RunStopCommandInput{
+				Client:      mockClient,
+				ContainerID: "test-container-id-123456",
+				Executor:    executor,
+				ServiceName: "test-service",
+				StopCommand: tt.stopCommand,
+			}
+
+			err := runStopCommand(ctx, input)
+			if (err != nil) != tt.expectError {
+				t.Errorf("runStopCommand() error = %v, expectError %v", err, tt.expectError)
+			}
+		})
 	}
 }
 

@@ -121,6 +121,12 @@ func (c *DeployCommand) Run(args []string) int {
 		return 1
 	}
 
+	client, err := internal.NewDockerClient()
+	if err != nil {
+		c.Ui.Error(err.Error())
+		return 1
+	}
+
 	serviceName := arguments["service-name"].StringValue()
 	if serviceName == "" {
 		if c.replicas > 0 {
@@ -130,6 +136,7 @@ func (c *DeployCommand) Run(args []string) int {
 
 		c.Ui.Output(fmt.Sprintf("Deploying entire project from %s", c.file))
 		err = internal.DeployProject(internal.DeployProjectInput{
+			Client:                client,
 			ComposeFile:           c.file,
 			ContainerNameTemplate: c.containerNameTemplate,
 			Logger:                c.Ui,
@@ -145,6 +152,7 @@ func (c *DeployCommand) Run(args []string) int {
 
 	c.Ui.Output(fmt.Sprintf("Deploying service %s", serviceName))
 	err = internal.DeployService(internal.DeployServiceInput{
+		Client:                client,
 		ComposeFile:           c.file,
 		ContainerNameTemplate: c.containerNameTemplate,
 		Logger:                c.Ui,

@@ -48,9 +48,13 @@ docker orchestrate deploy web --replicas 5
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
 - `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
 
-## Script Healthchecks
+## Script Extensions
 
-In addition to native healthchecks, `docker-orchestrate` supports an extended healthcheck mechanism via the `x-healthcheck-command` field within the `update_config` section of a service.
+In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.
+
+### Script Healthchecks
+
+The tool supports an extended healthcheck mechanism via the `x-healthcheck-command` field.
 
 ```yaml
 services:
@@ -64,14 +68,29 @@ services:
           curl -f http://{{.ContainerIP}}:8080/health
 ```
 
-The script command is treated as a Go template and has access to:
+The script healthcheck runs after the standard Docker healthcheck (if defined) succeeds.
+
+### Stop Commands
+
+The tool also supports an `x-stop-command` field, which is executed before a container is terminated (e.g., during a rolling update or scale down).
+
+```yaml
+services:
+  web:
+    deploy:
+      update_config:
+        x-stop-command: |
+          curl -f http://{{.ContainerIP}}:8080/shutdown
+```
+
+### Script Templating
+
+Both `x-healthcheck-command` and `x-stop-command` are treated as Go templates and have access to:
 
 - `.ContainerID`: Full ID of the container.
 - `.ContainerShortID`: First 12 characters of the container ID.
 - `.ContainerIP`: Internal IP address of the container.
 - `.ServiceName`: Name of the service.
-
-The script healthcheck runs after the standard Docker healthcheck (if defined) succeeds.
 
 ## Caveats
 
