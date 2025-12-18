@@ -26,28 +26,28 @@ func TestErrorWithOutput(t *testing.T) {
 	}
 }
 
-func TestRunStopCommand(t *testing.T) {
+func TestRunPreStopCommand(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name        string
-		stopCommand string
-		expectError bool
+		name           string
+		preStopCommand string
+		expectError    bool
 	}{
 		{
-			name:        "successful_stop_command",
-			stopCommand: "echo 'stopping'",
-			expectError: false,
+			name:           "successful_stop_command",
+			preStopCommand: "echo 'stopping'",
+			expectError:    false,
 		},
 		{
-			name:        "failing_stop_command",
-			stopCommand: "exit 1",
-			expectError: true,
+			name:           "failing_stop_command",
+			preStopCommand: "exit 1",
+			expectError:    true,
 		},
 		{
-			name:        "no_stop_command",
-			stopCommand: "",
-			expectError: false,
+			name:           "no_stop_command",
+			preStopCommand: "",
+			expectError:    false,
 		},
 	}
 
@@ -77,7 +77,7 @@ func TestRunStopCommand(t *testing.T) {
 			}
 
 			executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-				if tt.stopCommand == "exit 1" {
+				if tt.preStopCommand == "exit 1" {
 					return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("command failed")
 				}
 				return ExecCommandResponse{ExitCode: 0}, nil
@@ -88,12 +88,12 @@ func TestRunStopCommand(t *testing.T) {
 				ContainerID: "test-container-id-123456",
 				Executor:    executor,
 				ServiceName: "test-service",
-				StopCommand: tt.stopCommand,
+				Script:      tt.preStopCommand,
 			}
 
-			err := runStopCommand(ctx, input)
+			err := runPreStopCommand(ctx, input)
 			if (err != nil) != tt.expectError {
-				t.Errorf("runStopCommand() error = %v, expectError %v", err, tt.expectError)
+				t.Errorf("runPreStopCommand() error = %v, expectError %v", err, tt.expectError)
 			}
 		})
 	}
@@ -156,7 +156,7 @@ func TestRunPostStopCommand(t *testing.T) {
 				ContainerID: "test-container-id-123456",
 				Executor:    executor,
 				ServiceName: "test-service",
-				StopCommand: tt.postStopCommand,
+				Script:      tt.postStopCommand,
 			}
 
 			err := runPostStopCommand(ctx, input)

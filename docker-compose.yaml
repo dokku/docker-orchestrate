@@ -14,7 +14,7 @@ services:
         x-healthcheck-command: |
           echo "Healthcheck for container {{ .ContainerShortID }} failed!" >&2
           exit 0
-        x-stop-command: |
+        x-pre-stop-command: |
           echo "This can be used to interact with the container before it is stopped by the docker api"
           echo 'Stop command running on host'
           exit 0

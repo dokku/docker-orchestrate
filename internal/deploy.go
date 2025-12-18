@@ -178,14 +178,14 @@ func DeployService(input DeployServiceInput) error {
 	}
 
 	healthcheckCommand := ""
-	stopCommand := ""
+	preStopCommand := ""
 	postStopCommand := ""
 	if updateConfig.Extensions != nil {
 		if cmd, ok := updateConfig.Extensions["x-healthcheck-command"].(string); ok {
 			healthcheckCommand = cmd
 		}
-		if cmd, ok := updateConfig.Extensions["x-stop-command"].(string); ok {
-			stopCommand = cmd
+		if cmd, ok := updateConfig.Extensions["x-pre-stop-command"].(string); ok {
+			preStopCommand = cmd
 		}
 		if cmd, ok := updateConfig.Extensions["x-post-stop-command"].(string); ok {
 			postStopCommand = cmd
@@ -223,7 +223,7 @@ func DeployService(input DeployServiceInput) error {
 			Logger:            input.Logger,
 			ProjectName:       input.ProjectName,
 			ServiceName:       input.ServiceName,
-			StopCommand:       stopCommand,
+			PreStopCommand:    preStopCommand,
 			PostStopCommand:   postStopCommand,
 		})
 		if err != nil {
@@ -270,7 +270,7 @@ func DeployService(input DeployServiceInput) error {
 			ProjectDir:         projectDir,
 			ProjectName:        input.ProjectName,
 			ServiceName:        input.ServiceName,
-			StopCommand:        stopCommand,
+			PreStopCommand:     preStopCommand,
 			PostStopCommand:    postStopCommand,
 		})
 		if err != nil {
@@ -308,7 +308,7 @@ func DeployService(input DeployServiceInput) error {
 			ProjectDir:         projectDir,
 			ProjectName:        input.ProjectName,
 			ServiceName:        input.ServiceName,
-			StopCommand:        stopCommand,
+			PreStopCommand:     preStopCommand,
 			PostStopCommand:    postStopCommand,
 		})
 		if err != nil {

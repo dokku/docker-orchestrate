@@ -72,14 +72,14 @@ The script healthcheck runs after the standard Docker healthcheck (if defined) s
 
 ### Stop Commands
 
-The tool also supports `x-stop-command` and `x-post-stop-command` fields, which are executed before and after a container is terminated, respectively (e.g., during a rolling update or scale down).
+The tool also supports `x-pre-stop-command` and `x-post-stop-command` fields, which are executed before and after a container is terminated, respectively (e.g., during a rolling update or scale down).
 
 ```yaml
 services:
   web:
     deploy:
       update_config:
-        x-stop-command: |
+        x-pre-stop-command: |
           curl -f http://{{.ContainerIP}}:8080/shutdown
         x-post-stop-command: |
           echo "Container {{.ContainerShortID}} has been stopped"
@@ -87,7 +87,7 @@ services:
 
 ### Script Templating
 
-Both `x-healthcheck-command`, `x-stop-command`, and `x-post-stop-command` are treated as Go templates and have access to:
+Both `x-healthcheck-command`, `x-pre-stop-command`, and `x-post-stop-command` are treated as Go templates and have access to:
 
 - `.ContainerID`: Full ID of the container.
 - `.ContainerShortID`: First 12 characters of the container ID.

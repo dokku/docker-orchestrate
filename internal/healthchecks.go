@@ -68,7 +68,7 @@ func waitForHealthcheck(ctx context.Context, input WaitForHealthcheckInput) erro
 	return waitForScriptHealthcheck(ctx, input)
 }
 
-// RunStopCommandInput is the input for the runStopCommand function
+// RunStopCommandInput is the input for the stop command functions
 type RunStopCommandInput struct {
 	// Client is the Docker client to use.
 	Client DockerClientInterface
@@ -78,19 +78,19 @@ type RunStopCommandInput struct {
 	Executor CommandExecutor
 	// ServiceName is the name of the service
 	ServiceName string
-	// StopCommand is the command to run for stop checks
-	StopCommand string
+	// Script is the command to run
+	Script string
 }
 
-// runStopCommand runs the stop command for a container
-func runStopCommand(ctx context.Context, input RunStopCommandInput) error {
+// runPreStopCommand runs the pre-stop command for a container
+func runPreStopCommand(ctx context.Context, input RunStopCommandInput) error {
 	return runScript(ctx, runScriptInput{
 		Client:      input.Client,
 		ContainerID: input.ContainerID,
 		Executor:    input.Executor,
 		ServiceName: input.ServiceName,
-		Script:      input.StopCommand,
-		ScriptType:  "stop",
+		Script:      input.Script,
+		ScriptType:  "pre-stop",
 	})
 }
 
@@ -101,7 +101,7 @@ func runPostStopCommand(ctx context.Context, input RunStopCommandInput) error {
 		ContainerID: input.ContainerID,
 		Executor:    input.Executor,
 		ServiceName: input.ServiceName,
-		Script:      input.StopCommand,
+		Script:      input.Script,
 		ScriptType:  "post-stop",
 	})
 }
