@@ -1,0 +1,19 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 8
+      update_config:
+        parallelism: 4
+        delay: 0s
+        failure_action: pause
+        monitor: 5s
+        max_failure_ratio: 0.1
+        order: start-first
+        x-healthcheck-command: |
+          echo "Healthcheck for container {{ .ContainerShortID }} failed!" >&2
+          exit 0
+        x-stop-command: |
+          echo 'Stop command running on host'
+          exit 0
