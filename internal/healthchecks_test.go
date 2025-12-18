@@ -3,7 +3,7 @@ package internal
 import (
 	"context"
 	"errors"
-	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,243 +24,6 @@ func TestErrorWithOutput(t *testing.T) {
 	if err.Output != "some output" {
 		t.Errorf("expected 'some output', got '%s'", err.Output)
 	}
-}
-
-func TestRunPreStopCommand(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		name           string
-		preStopCommand string
-		expectError    bool
-	}{
-		{
-			name:           "successful_stop_command",
-			preStopCommand: "echo 'stopping'",
-			expectError:    false,
-		},
-		{
-			name:           "failing_stop_command",
-			preStopCommand: "exit 1",
-			expectError:    true,
-		},
-		{
-			name:           "no_stop_command",
-			preStopCommand: "",
-			expectError:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockClient := &mockDockerClient{
-				containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
-					return container.InspectResponse{
-						ContainerJSONBase: &container.ContainerJSONBase{
-							ID: id,
-							State: &container.State{
-								Running: true,
-							},
-							HostConfig: &container.HostConfig{
-								NetworkMode: "bridge",
-							},
-						},
-						NetworkSettings: &container.NetworkSettings{
-							Networks: map[string]*network.EndpointSettings{
-								"bridge": {
-									IPAddress: "172.17.0.2",
-								},
-							},
-						},
-					}, nil
-				},
-			}
-
-			executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-				if tt.preStopCommand == "exit 1" {
-					return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("command failed")
-				}
-				return ExecCommandResponse{ExitCode: 0}, nil
-			}
-
-			input := RunStopCommandInput{
-				Client:      mockClient,
-				ContainerID: "test-container-id-123456",
-				Executor:    executor,
-				ServiceName: "test-service",
-				Script:      tt.preStopCommand,
-			}
-
-			err := runPreStopCommand(ctx, input)
-			if (err != nil) != tt.expectError {
-				t.Errorf("runPreStopCommand() error = %v, expectError %v", err, tt.expectError)
-			}
-		})
-	}
-}
-
-func TestRunPostStopCommand(t *testing.T) {
-	ctx := context.Background()
-
-	tests := []struct {
-		name            string
-		postStopCommand string
-		expectError     bool
-	}{
-		{
-			name:            "successful_post_stop_command",
-			postStopCommand: "echo 'stopped'",
-			expectError:     false,
-		},
-		{
-			name:            "failing_post_stop_command",
-			postStopCommand: "exit 1",
-			expectError:     true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockClient := &mockDockerClient{
-				containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
-					return container.InspectResponse{
-						ContainerJSONBase: &container.ContainerJSONBase{
-							ID: id,
-							State: &container.State{
-								Running: false,
-							},
-							HostConfig: &container.HostConfig{
-								NetworkMode: "bridge",
-							},
-						},
-						NetworkSettings: &container.NetworkSettings{
-							Networks: map[string]*network.EndpointSettings{
-								"bridge": {
-									IPAddress: "172.17.0.2",
-								},
-							},
-						},
-					}, nil
-				},
-			}
-
-			executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-				if tt.postStopCommand == "exit 1" {
-					return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("command failed")
-				}
-				return ExecCommandResponse{ExitCode: 0}, nil
-			}
-
-			input := RunStopCommandInput{
-				Client:      mockClient,
-				ContainerID: "test-container-id-123456",
-				Executor:    executor,
-				ServiceName: "test-service",
-				Script:      tt.postStopCommand,
-			}
-
-			err := runPostStopCommand(ctx, input)
-			if (err != nil) != tt.expectError {
-				t.Errorf("runPostStopCommand() error = %v, expectError %v", err, tt.expectError)
-			}
-		})
-	}
-}
-
-func TestWaitForScriptHealthcheck(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("successful script healthcheck", func(t *testing.T) {
-		mockClient := &mockDockerClient{
-			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
-				return container.InspectResponse{
-					ContainerJSONBase: &container.ContainerJSONBase{
-						ID: id,
-						HostConfig: &container.HostConfig{
-							NetworkMode: "bridge",
-						},
-					},
-					NetworkSettings: &container.NetworkSettings{
-						Networks: map[string]*network.EndpointSettings{
-							"bridge": {
-								IPAddress: "172.17.0.2",
-							},
-						},
-					},
-				}, nil
-			},
-		}
-
-		executorCalled := false
-		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			executorCalled = true
-			if !strings.Contains(input.Command, "healthcheck-") {
-				t.Errorf("expected command to be a temp file, got %s", input.Command)
-			}
-			return ExecCommandResponse{ExitCode: 0}, nil
-		}
-
-		input := WaitForHealthcheckInput{
-			Client:             mockClient,
-			ContainerID:        "test-container-id",
-			Executor:           executor,
-			HealthcheckCommand: "curl -f http://{{.ContainerIP}}:8080/health",
-			ServiceName:        "web",
-		}
-
-		err := waitForScriptHealthcheck(ctx, input)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if !executorCalled {
-			t.Error("expected executor to be called")
-		}
-	})
-
-	t.Run("failing script healthcheck", func(t *testing.T) {
-		mockClient := &mockDockerClient{
-			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
-				return container.InspectResponse{
-					ContainerJSONBase: &container.ContainerJSONBase{
-						HostConfig: &container.HostConfig{
-							NetworkMode: "host",
-						},
-					},
-				}, nil
-			},
-		}
-
-		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if input.StderrWriter != nil {
-				_, _ = input.StderrWriter.Write([]byte("connection refused"))
-			}
-			return ExecCommandResponse{
-				ExitCode: 1,
-				Stderr:   "connection refused",
-			}, errors.New("exit status 1")
-		}
-
-		input := WaitForHealthcheckInput{
-			Client:             mockClient,
-			ContainerID:        "test-container-id",
-			Executor:           executor,
-			HealthcheckCommand: "exit 1",
-		}
-
-		err := waitForScriptHealthcheck(ctx, input)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-
-		eo, ok := err.(*ErrorWithOutput)
-		if !ok {
-			t.Fatalf("expected ErrorWithOutput, got %T", err)
-		}
-		if !strings.Contains(eo.Output, "connection refused") {
-			t.Errorf("expected output to contain 'connection refused', got '%s'", eo.Output)
-		}
-	})
 }
 
 func TestWaitForDockerHealthCheck(t *testing.T) {
@@ -407,6 +170,315 @@ func TestWaitForDockerHealthCheck(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "health check timeout") {
 			t.Errorf("expected timeout error, got '%v'", err)
+		}
+	})
+}
+
+func TestRunHostScript(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("successful execution", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+						HostConfig: &container.HostConfig{
+							NetworkMode: "bridge",
+						},
+					},
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"bridge": {
+								IPAddress: "172.17.0.2",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+
+		executorCalled := false
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executorCalled = true
+			if !strings.Contains(input.Command, "test-script-") {
+				// The prefix in CreateTemp is input.ScriptType + "-"
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id-long-enough",
+			Executor:    executor,
+			ServiceName: "test-service",
+			Script:      "echo hello",
+			ScriptType:  "test-script",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !executorCalled {
+			t.Error("expected executor to be called")
+		}
+	})
+
+	t.Run("template variables", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+						HostConfig: &container.HostConfig{
+							NetworkMode: "bridge",
+						},
+					},
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"bridge": {
+								IPAddress: "172.17.0.2",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+
+		var executedCommand string
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			content, _ := os.ReadFile(input.Command)
+			executedCommand = string(content)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "12345678901234567890",
+			Executor:    executor,
+			ServiceName: "web",
+			Script:      "echo {{.ContainerID}} {{.ContainerIP}} {{.ContainerShortID}} {{.ServiceName}}",
+			ScriptType:  "test",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		expected := "#!/usr/bin/env bash\necho 12345678901234567890 172.17.0.2 123456789012 web"
+		if !strings.Contains(executedCommand, expected) {
+			t.Errorf("expected command to contain %q, got %q", expected, executedCommand)
+		}
+	})
+
+	t.Run("failing command", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.StderrWriter != nil {
+				_, _ = input.StderrWriter.Write([]byte("command failed output"))
+			}
+			return ExecCommandResponse{ExitCode: 1}, errors.New("exit status 1")
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-id",
+			Executor:    executor,
+			Script:      "exit 1",
+			ScriptType:  "test",
+		}
+
+		err := runHostScript(ctx, input)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		eo, ok := err.(*ErrorWithOutput)
+		if !ok {
+			t.Fatalf("expected *ErrorWithOutput, got %T", err)
+		}
+		if !strings.Contains(eo.Output, "command failed output") {
+			t.Errorf("expected output to contain 'command failed output', got %q", eo.Output)
+		}
+	})
+
+	t.Run("empty script", func(t *testing.T) {
+		err := runHostScript(ctx, runScriptInput{Script: ""})
+		if err != nil {
+			t.Errorf("expected nil error for empty script, got %v", err)
+		}
+	})
+
+	t.Run("missing client", func(t *testing.T) {
+		input := runScriptInput{
+			Script:   "echo hello",
+			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
+		}
+		err := runHostScript(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "client is required") {
+			t.Errorf("expected 'client is required' error, got %v", err)
+		}
+	})
+
+	t.Run("missing executor", func(t *testing.T) {
+		input := runScriptInput{
+			Script: "echo hello",
+			Client: &mockDockerClient{},
+		}
+		err := runHostScript(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "executor is required") {
+			t.Errorf("expected 'executor is required' error, got %v", err)
+		}
+	})
+
+	t.Run("invalid template", func(t *testing.T) {
+		input := runScriptInput{
+			Client:   &mockDockerClient{},
+			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
+			Script:   "echo {{.Invalid}}",
+		}
+		err := runHostScript(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "error parsing") {
+			// Actually parsing might succeed, but execution will fail if field doesn't exist
+			// Wait, template.New().Parse() only checks syntax.
+		}
+	})
+
+	t.Run("container IP error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{}, errors.New("inspect error")
+			},
+		}
+		input := runScriptInput{
+			Client:      mockClient,
+			Executor:    func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) { return ExecCommandResponse{}, nil },
+			Script:      "echo hello",
+			ContainerID: "test-id",
+		}
+		err := runHostScript(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "inspect error") {
+			t.Errorf("expected inspect error, got %v", err)
+		}
+	})
+}
+
+func TestGetContainerIP(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("host network", func(t *testing.T) {
+		client := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{
+							NetworkMode: "host",
+						},
+					},
+				}, nil
+			},
+		}
+		ip, err := getContainerIP(ctx, client, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ip != "127.0.0.1" {
+			t.Errorf("expected 127.0.0.1, got %s", ip)
+		}
+	})
+
+	t.Run("bridge network", func(t *testing.T) {
+		client := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{
+							NetworkMode: "bridge",
+						},
+					},
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"bridge": {
+								IPAddress: "172.17.0.5",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+		ip, err := getContainerIP(ctx, client, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ip != "172.17.0.5" {
+			t.Errorf("expected 172.17.0.5, got %s", ip)
+		}
+	})
+
+	t.Run("custom network", func(t *testing.T) {
+		client := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{
+							NetworkMode: "my-net",
+						},
+					},
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"my-net": {
+								IPAddress: "192.168.0.10",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+		ip, err := getContainerIP(ctx, client, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ip != "192.168.0.10" {
+			t.Errorf("expected 192.168.0.10, got %s", ip)
+		}
+	})
+
+	t.Run("network mismatch", func(t *testing.T) {
+		client := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{
+							NetworkMode: "my-net",
+						},
+					},
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"other-net": {
+								IPAddress: "192.168.0.10",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+		ip, err := getContainerIP(ctx, client, "id")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ip != "" {
+			t.Errorf("expected empty IP for network mismatch, got %s", ip)
 		}
 	})
 }

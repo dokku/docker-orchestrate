@@ -177,18 +177,18 @@ func DeployService(input DeployServiceInput) error {
 		order = string(updateConfig.Order)
 	}
 
-	healthcheckCommand := ""
-	preStopCommand := ""
-	postStopCommand := ""
+	healthcheckHostCommand := ""
+	preStopHostCommand := ""
+	postStopHostCommand := ""
 	if updateConfig.Extensions != nil {
-		if cmd, ok := updateConfig.Extensions["x-healthcheck-command"].(string); ok {
-			healthcheckCommand = cmd
+		if cmd, ok := updateConfig.Extensions["x-healthcheck-host-command"].(string); ok {
+			healthcheckHostCommand = cmd
 		}
-		if cmd, ok := updateConfig.Extensions["x-pre-stop-command"].(string); ok {
-			preStopCommand = cmd
+		if cmd, ok := updateConfig.Extensions["x-pre-stop-host-command"].(string); ok {
+			preStopHostCommand = cmd
 		}
-		if cmd, ok := updateConfig.Extensions["x-post-stop-command"].(string); ok {
-			postStopCommand = cmd
+		if cmd, ok := updateConfig.Extensions["x-post-stop-host-command"].(string); ok {
+			postStopHostCommand = cmd
 		}
 	}
 
@@ -214,17 +214,17 @@ func DeployService(input DeployServiceInput) error {
 	// Scale down if needed (before rolling update)
 	if len(currentContainers) > replicas {
 		err := scaleDownContainers(ctx, ScaleDownContainersInput{
-			Client:            input.Client,
-			ComposeFile:       input.ComposeFile,
-			CurrentContainers: currentContainers,
-			CurrentReplicas:   len(currentContainers),
-			DesiredReplicas:   replicas,
-			Executor:          executor,
-			Logger:            input.Logger,
-			ProjectName:       input.ProjectName,
-			ServiceName:       input.ServiceName,
-			PreStopCommand:    preStopCommand,
-			PostStopCommand:   postStopCommand,
+			Client:              input.Client,
+			ComposeFile:         input.ComposeFile,
+			CurrentContainers:   currentContainers,
+			CurrentReplicas:     len(currentContainers),
+			DesiredReplicas:     replicas,
+			Executor:            executor,
+			Logger:              input.Logger,
+			PostStopHostCommand: postStopHostCommand,
+			PreStopHostCommand:  preStopHostCommand,
+			ProjectName:         input.ProjectName,
+			ServiceName:         input.ServiceName,
 		})
 		if err != nil {
 			return err
@@ -253,25 +253,25 @@ func DeployService(input DeployServiceInput) error {
 	var rollingUpdateOutput RollingUpdateOutput
 	if len(containersToUpdate) > 0 {
 		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
-			Client:             input.Client,
-			ComposeFile:        input.ComposeFile,
-			ContainersToUpdate: containersToUpdate,
-			CurrentReplicas:    len(containersToUpdate),
-			Delay:              delay,
-			DesiredReplicas:    replicas,
-			Executor:           executor,
-			FailureAction:      updateConfig.FailureAction,
-			HealthcheckCommand: healthcheckCommand,
-			Logger:             input.Logger,
-			MaxFailureRatio:    maxFailureRatio,
-			Monitor:            monitor,
-			Order:              order,
-			Parallelism:        parallelism,
-			ProjectDir:         projectDir,
-			ProjectName:        input.ProjectName,
-			ServiceName:        input.ServiceName,
-			PreStopCommand:     preStopCommand,
-			PostStopCommand:    postStopCommand,
+			Client:              input.Client,
+			ComposeFile:         input.ComposeFile,
+			ContainersToUpdate:  containersToUpdate,
+			CurrentReplicas:     len(containersToUpdate),
+			Delay:               delay,
+			DesiredReplicas:     replicas,
+			Executor:            executor,
+			FailureAction:       updateConfig.FailureAction,
+			HealthcheckCommand:  healthcheckHostCommand,
+			Logger:              input.Logger,
+			MaxFailureRatio:     maxFailureRatio,
+			Monitor:             monitor,
+			Order:               order,
+			Parallelism:         parallelism,
+			PostStopHostCommand: postStopHostCommand,
+			PreStopHostCommand:  preStopHostCommand,
+			ProjectDir:          projectDir,
+			ProjectName:         input.ProjectName,
+			ServiceName:         input.ServiceName,
 		})
 		if err != nil {
 			return fmt.Errorf("error rolling update containers: %v", err)
@@ -292,24 +292,24 @@ func DeployService(input DeployServiceInput) error {
 	// Scale up if needed (only after existing containers are replaced)
 	if len(updatedContainers) < replicas {
 		err := scaleUpContainers(ctx, ScaleUpContainersInput{
-			Client:             input.Client,
-			ComposeFile:        input.ComposeFile,
-			CurrentReplicas:    len(updatedContainers),
-			Delay:              delay,
-			DesiredReplicas:    replicas,
-			Executor:           executor,
-			ExistingContainers: updatedContainers,
-			FailureAction:      string(updateConfig.FailureAction),
-			HealthcheckCommand: healthcheckCommand,
-			Logger:             input.Logger,
-			MaxFailureRatio:    maxFailureRatio,
-			Monitor:            monitor,
-			Parallelism:        parallelism,
-			ProjectDir:         projectDir,
-			ProjectName:        input.ProjectName,
-			ServiceName:        input.ServiceName,
-			PreStopCommand:     preStopCommand,
-			PostStopCommand:    postStopCommand,
+			Client:              input.Client,
+			ComposeFile:         input.ComposeFile,
+			CurrentReplicas:     len(updatedContainers),
+			Delay:               delay,
+			DesiredReplicas:     replicas,
+			Executor:            executor,
+			ExistingContainers:  updatedContainers,
+			FailureAction:       string(updateConfig.FailureAction),
+			HealthcheckCommand:  healthcheckHostCommand,
+			Logger:              input.Logger,
+			MaxFailureRatio:     maxFailureRatio,
+			Monitor:             monitor,
+			Parallelism:         parallelism,
+			PostStopHostCommand: postStopHostCommand,
+			PreStopHostCommand:  preStopHostCommand,
+			ProjectDir:          projectDir,
+			ProjectName:         input.ProjectName,
+			ServiceName:         input.ServiceName,
 		})
 		if err != nil {
 			return err

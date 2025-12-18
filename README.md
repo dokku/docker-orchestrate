@@ -54,7 +54,7 @@ In addition to native healthchecks, `docker-orchestrate` supports extended funct
 
 ### Script Healthchecks
 
-The tool supports an extended healthcheck mechanism via the `x-healthcheck-command` field.
+The tool supports an extended healthcheck mechanism via the `x-healthcheck-host-command` field.
 
 ```yaml
 services:
@@ -64,7 +64,7 @@ services:
       update_config:
         parallelism: 1
         order: start-first
-        x-healthcheck-command: |
+        x-healthcheck-host-command: |
           curl -f http://{{.ContainerIP}}:8080/health
 ```
 
@@ -72,22 +72,22 @@ The script healthcheck runs after the standard Docker healthcheck (if defined) s
 
 ### Stop Commands
 
-The tool also supports `x-pre-stop-command` and `x-post-stop-command` fields, which are executed before and after a container is terminated, respectively (e.g., during a rolling update or scale down).
+The tool also supports `x-pre-stop-host-command` and `x-post-stop-host-command` fields, which are executed before and after a container is terminated, respectively (e.g., during a rolling update or scale down).
 
 ```yaml
 services:
   web:
     deploy:
       update_config:
-        x-pre-stop-command: |
+        x-pre-stop-host-command: |
           curl -f http://{{.ContainerIP}}:8080/shutdown
-        x-post-stop-command: |
+        x-post-stop-host-command: |
           echo "Container {{.ContainerShortID}} has been stopped"
 ```
 
 ### Script Templating
 
-Both `x-healthcheck-command`, `x-pre-stop-command`, and `x-post-stop-command` are treated as Go templates and have access to:
+Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-host-command` are treated as Go templates and have access to:
 
 - `.ContainerID`: Full ID of the container.
 - `.ContainerShortID`: First 12 characters of the container ID.
@@ -97,6 +97,6 @@ Both `x-healthcheck-command`, `x-pre-stop-command`, and `x-post-stop-command` ar
 ## Caveats
 
 - **Single-node focus**: `docker orchestrate` is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
-- **Script healthcheck locality**: The `x-healthcheck-command` script is executed on the host machine where the `docker orchestrate` command is run, not within the container itself. Use the `HEALTHCHECK` directive to run healthchecks within a container.
+- **Script healthcheck locality**: The `x-healthcheck-host-command` script is executed on the host machine where the `docker orchestrate` command is run, not within the container itself. Use the `HEALTHCHECK` directive to run healthchecks within a container.
 - **Network connectivity**: For script healthchecks that rely on `.ContainerIP`, the host machine must have direct network access to the container's IP address (e.g., via the Docker bridge network).
 - **Failure Action**: Currently, only the `pause` `failure_action` is supported. Other `failure_action` values will cause `docker orchestrate` to exit non-zero. If a deployment fails, `docker orchestrate` will stop and leave the system in its current state.
