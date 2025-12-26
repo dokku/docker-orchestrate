@@ -156,18 +156,20 @@ func DeployService(input DeployServiceInput) error {
 	//   from the `input.Replicas` field if specified
 	//   or the `service.[service-name].deploy.replicas` field in the compose file
 	//   or the `service.[service-name].scale` field in the compose file
+	//   or 1 if none of the above are specified
 	var replicas int
 	if input.Replicas > 0 {
 		replicas = input.Replicas
 	}
-	if replicas == 0 && service.Deploy.Replicas != nil {
-		replicas = int(*service.Deploy.Replicas)
-	}
-	if replicas == 0 && service.Scale != nil {
-		replicas = int(*service.Scale)
-	}
+
 	if replicas == 0 {
-		return fmt.Errorf("service %s has no service.scale or service.deploy.replicas defined", input.ServiceName)
+		if service.Deploy != nil && service.Deploy.Replicas != nil {
+			replicas = int(*service.Deploy.Replicas)
+		} else if service.Scale != nil {
+			replicas = int(*service.Scale)
+		} else {
+			replicas = 1
+		}
 	}
 
 	// Get update_config settings
