@@ -369,6 +369,12 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 
 // shouldSkipService returns true if the service should be skipped
 func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, logger *command.ZerologUi) bool {
+	// skip model services
+	if len(service.Models) > 0 {
+		logger.Info(fmt.Sprintf("Skipping model service: service=%s", service.Name))
+		return true
+	}
+
 	// skip provider services
 	if service.Provider != nil {
 		logger.Info(fmt.Sprintf("Skipping provider service: service=%s", service.Name))

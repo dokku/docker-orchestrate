@@ -48,9 +48,3 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: postgres
-  database:
-    provider:
-      type: awesomecloud
-      options:
-        type: mysql
-        foo: bar

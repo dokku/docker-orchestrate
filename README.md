@@ -155,6 +155,23 @@ When a service has this label set to `"true"`, it will be skipped during deploym
 
 **Note**: The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` will not trigger skipping.
 
+### Skipping Model Services
+
+Services that define models (via the `models` field) are automatically skipped during deployment. Model services are typically used for service composition and should not be deployed directly by `docker-orchestrate`.
+
+```yaml
+services:
+  app:
+    models:
+      model1:
+        # model configuration
+  web:
+    image: nginx:alpine
+    # This service will be deployed normally
+```
+
+Model services are skipped before any other skip checks (provider, labels, or database detection), ensuring they are never deployed regardless of other configuration.
+
 ### Skipping Provider Services
 
 Services that use external providers (defined via the `provider` field) are automatically skipped during deployment. Provider services are typically managed by external systems (like cloud providers) and should not be deployed by `docker-orchestrate`.
@@ -172,7 +189,7 @@ services:
     # This service will be deployed normally
 ```
 
-Provider services are skipped before any other skip checks (labels or database detection), ensuring they are never deployed regardless of other configuration.
+Provider services are skipped before skip label and database detection checks (but after model services), ensuring they are never deployed regardless of other configuration.
 
 ## Caveats
 
