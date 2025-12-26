@@ -25,8 +25,6 @@ type DeployProjectInput struct {
 	Executor CommandExecutor
 	// Logger is the logger to use
 	Logger *command.ZerologUi
-	// Profiles is the profiles to enable
-	Profiles []string
 	// Project is the project configuration
 	Project *types.Project
 	// ProjectName is the name of the project
@@ -37,53 +35,12 @@ type DeployProjectInput struct {
 
 // DeployProject deploys a project
 func DeployProject(ctx context.Context, input DeployProjectInput) error {
-	// deploy each service in the project
-	// start with the web service if it exists, and then process everything else in dependency order
-	// if the web service has dependencies, skip it and deploy all services in dependency order
-	skipWeb := true
-	for _, service := range input.Project.Services {
-		if service.Name == "web" {
-			if len(service.DependsOn) > 0 {
-				skipWeb = false
-				continue
-			}
-
-			input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", service.Name))
-			err := DeployService(ctx, DeployServiceInput{
-				Client:                input.Client,
-				ComposeFile:           input.ComposeFile,
-				ContainerNameTemplate: input.ContainerNameTemplate,
-				Executor:              input.Executor,
-				Logger:                input.Logger,
-				Project:               input.Project,
-				ProjectName:           input.ProjectName,
-				ServiceName:           service.Name,
-				SkipDatabases:         input.SkipDatabases,
-			})
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	dependencyOrder := []string{}
-	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
-		if name == "web" && skipWeb {
-			return nil
-		}
-
-		service, err := input.Project.GetService(name)
-		if err != nil {
-			return err
-		}
-		dependencyOrder = append(dependencyOrder, service.Name)
-		return nil
-	})
+	orderedServices, err := OrderServices(ctx, input)
 	if err != nil {
 		return err
 	}
 
-	for _, serviceName := range dependencyOrder {
+	for _, serviceName := range orderedServices {
 		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 		err = DeployService(ctx, DeployServiceInput{
 			Client:                input.Client,
@@ -387,6 +344,48 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	return nil
 }
 
+// OrderServices orders the services in the project in dependency order
+// deploy each service in the project
+// start with the web service if it exists, and then process everything else in dependency order
+// if the web service has dependencies, skip it and deploy all services in dependency order
+func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, error) {
+	hasWeb := false
+	skipWeb := true
+	for _, service := range input.Project.Services {
+		if service.Name == "web" {
+			hasWeb = true
+			if len(service.DependsOn) > 0 {
+				skipWeb = false
+				continue
+			}
+			break
+		}
+	}
+
+	dependencyOrder := []string{}
+	if hasWeb && skipWeb {
+		dependencyOrder = append(dependencyOrder, "web")
+	}
+	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
+		if name == "web" && skipWeb {
+			return nil
+		}
+
+		service, err := input.Project.GetService(name)
+		if err != nil {
+			return err
+		}
+		dependencyOrder = append(dependencyOrder, service.Name)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return dependencyOrder, nil
+}
+
+// shouldSkipService returns true if the service should be skipped
 func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, logger *command.ZerologUi) bool {
 	if shouldSkipDatabases && isDatabaseService(service, logger) {
 		return true
@@ -394,6 +393,7 @@ func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, l
 	return false
 }
 
+// isDatabaseService returns true if the service is a database service
 func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) bool {
 	databaseImageRepositories := []string{
 		"clickhouse/clickhouse-server",

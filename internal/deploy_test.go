@@ -386,3 +386,249 @@ func TestShouldSkipService(t *testing.T) {
 		})
 	}
 }
+
+func TestOrderServices(t *testing.T) {
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	tests := []struct {
+		name          string
+		project       *types.Project
+		expectedOrder []string
+		expectError   bool
+		description   string
+	}{
+		{
+			name: "web_service_no_dependencies",
+			project: &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+					},
+					"api": types.ServiceConfig{
+						Name: "api",
+					},
+					"worker": types.ServiceConfig{
+						Name: "worker",
+					},
+				},
+			},
+			expectedOrder: []string{"web", "api", "worker"},
+			description:   "Web service should be first when it has no dependencies",
+		},
+		{
+			name: "web_service_with_dependencies",
+			project: &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+						DependsOn: map[string]types.ServiceDependency{
+							"api": {},
+						},
+					},
+					"api": types.ServiceConfig{
+						Name: "api",
+					},
+					"worker": types.ServiceConfig{
+						Name: "worker",
+					},
+				},
+			},
+			expectedOrder: []string{"api", "worker", "web"},
+			description:   "Web service should follow dependency order when it has dependencies",
+		},
+		{
+			name: "no_web_service",
+			project: &types.Project{
+				Services: types.Services{
+					"api": types.ServiceConfig{
+						Name: "api",
+					},
+					"worker": types.ServiceConfig{
+						Name: "worker",
+					},
+					"db": types.ServiceConfig{
+						Name: "db",
+					},
+				},
+			},
+			expectedOrder: []string{"api", "db", "worker"},
+			description:   "Services should be ordered by dependency when no web service exists",
+		},
+		{
+			name: "complex_dependencies",
+			project: &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+					},
+					"api": types.ServiceConfig{
+						Name: "api",
+						DependsOn: map[string]types.ServiceDependency{
+							"db": {},
+						},
+					},
+					"db": types.ServiceConfig{
+						Name: "db",
+					},
+					"worker": types.ServiceConfig{
+						Name: "worker",
+						DependsOn: map[string]types.ServiceDependency{
+							"db": {},
+						},
+					},
+				},
+			},
+			expectedOrder: []string{"web", "db", "api", "worker"},
+			description:   "Web first, then dependencies ordered correctly",
+		},
+		{
+			name: "web_with_multiple_dependencies",
+			project: &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+						DependsOn: map[string]types.ServiceDependency{
+							"api":    {},
+							"worker": {},
+						},
+					},
+					"api": types.ServiceConfig{
+						Name: "api",
+						DependsOn: map[string]types.ServiceDependency{
+							"db": {},
+						},
+					},
+					"db": types.ServiceConfig{
+						Name: "db",
+					},
+					"worker": types.ServiceConfig{
+						Name: "worker",
+					},
+				},
+			},
+			expectedOrder: []string{"db", "api", "worker", "web"},
+			description:   "Web with multiple dependencies should follow dependency order",
+		},
+		{
+			name: "single_service",
+			project: &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+					},
+				},
+			},
+			expectedOrder: []string{"web"},
+			description:   "Single service should return that service",
+		},
+		{
+			name: "single_service_no_web",
+			project: &types.Project{
+				Services: types.Services{
+					"api": types.ServiceConfig{
+						Name: "api",
+					},
+				},
+			},
+			expectedOrder: []string{"api"},
+			description:   "Single non-web service should return that service",
+		},
+		{
+			name: "empty_project",
+			project: &types.Project{
+				Services: types.Services{},
+			},
+			expectedOrder: []string{},
+			description:   "Empty project should return empty slice",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := DeployProjectInput{
+				Project: tt.project,
+				Logger:  logger,
+			}
+
+			result, err := OrderServices(ctx, input)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result) != len(tt.expectedOrder) {
+				t.Errorf("expected %d services, got %d. Expected: %v, Got: %v", len(tt.expectedOrder), len(result), tt.expectedOrder, result)
+				return
+			}
+
+			// Check that web is first if it has no dependencies
+			if len(tt.project.Services) > 0 {
+				webService, hasWeb := tt.project.Services["web"]
+				if hasWeb && len(webService.DependsOn) == 0 {
+					if result[0] != "web" {
+						t.Errorf("expected web to be first, got %s. Order: %v", result[0], result)
+					}
+				}
+			}
+
+			// Check that the order respects dependencies
+			// For each service, ensure its dependencies come before it
+			serviceIndex := make(map[string]int)
+			for i, name := range result {
+				serviceIndex[name] = i
+			}
+
+			for _, serviceName := range result {
+				service, ok := tt.project.Services[serviceName]
+				if !ok {
+					continue
+				}
+
+				for depName := range service.DependsOn {
+					depIndex, depExists := serviceIndex[depName]
+					serviceIdx := serviceIndex[serviceName]
+					if depExists && depIndex >= serviceIdx {
+						t.Errorf("dependency violation: %s depends on %s but %s comes after %s. Order: %v", serviceName, depName, depName, serviceName, result)
+					}
+				}
+			}
+
+			// Verify all expected services are present
+			expectedSet := make(map[string]bool)
+			for _, name := range tt.expectedOrder {
+				expectedSet[name] = true
+			}
+
+			resultSet := make(map[string]bool)
+			for _, name := range result {
+				resultSet[name] = true
+			}
+
+			if len(expectedSet) != len(resultSet) {
+				t.Errorf("service count mismatch. Expected: %v, Got: %v", tt.expectedOrder, result)
+			}
+
+			for name := range expectedSet {
+				if !resultSet[name] {
+					t.Errorf("missing service %s in result. Expected: %v, Got: %v", name, tt.expectedOrder, result)
+				}
+			}
+		})
+	}
+}
