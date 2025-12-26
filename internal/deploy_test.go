@@ -325,6 +325,7 @@ func TestShouldSkipService(t *testing.T) {
 		image               string
 		shouldSkipDatabases bool
 		expectedResult      bool
+		labels              map[string]string
 	}{
 		{
 			name:                "skip_databases_true_database_service",
@@ -368,6 +369,48 @@ func TestShouldSkipService(t *testing.T) {
 			shouldSkipDatabases: true,
 			expectedResult:      true,
 		},
+		{
+			name:                "skip_label_true",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      true,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "true"},
+		},
+		{
+			name:                "skip_label_false",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      false,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "false"},
+		},
+		{
+			name:                "skip_label_other_value",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      false,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "yes"},
+		},
+		{
+			name:                "skip_label_true_takes_precedence_over_database",
+			image:               "postgres:14",
+			shouldSkipDatabases: true,
+			expectedResult:      true,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "true"},
+		},
+		{
+			name:                "skip_label_false_still_checks_database",
+			image:               "postgres:14",
+			shouldSkipDatabases: true,
+			expectedResult:      true,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "false"},
+		},
+		{
+			name:                "no_skip_label_normal_behavior",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      false,
+			labels:              nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -376,6 +419,10 @@ func TestShouldSkipService(t *testing.T) {
 			service := &types.ServiceConfig{
 				Name:  "test-service",
 				Image: tt.image,
+			}
+
+			if tt.labels != nil {
+				service.Labels = tt.labels
 			}
 
 			result := shouldSkipService(service, tt.shouldSkipDatabases, logger)

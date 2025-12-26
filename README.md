@@ -136,6 +136,25 @@ When using the `--skip-databases` flag, `docker-orchestrate` automatically detec
 
 Detection is based on the image repository name (short name), so it works regardless of the image tag or registry. For example, both `postgres:14` and `myregistry.com/library/postgres:latest` would be detected as database services.
 
+### Skipping Services by Label
+
+You can skip individual services by adding the `com.dokku.orchestrate/skip` label with a value of `"true"` to the service definition. This is useful when you want to exclude specific services from deployment without using the `--skip-databases` flag.
+
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    labels:
+      com.dokku.orchestrate/skip: "true"
+  api:
+    image: myapp/api:latest
+    # This service will be deployed normally
+```
+
+When a service has this label set to `"true"`, it will be skipped during deployment regardless of other skip conditions (such as database detection). The label check takes precedence over the `--skip-databases` flag.
+
+**Note**: The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` will not trigger skipping.
+
 ## Caveats
 
 - **Single-node focus**: `docker orchestrate` is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
