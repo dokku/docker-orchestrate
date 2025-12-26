@@ -400,7 +400,7 @@ func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) 
 		"library/couchdb",
 		"library/elasticsearch",
 		"dokku/docker-grafana-graphite",
-		"mariadb",
+		"library/mariadb",
 		"getmeili/meilisearch",
 		"library/memcached",
 		"library/mongo",
@@ -417,7 +417,7 @@ func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) 
 	}
 	parsedImage, err := parser.Parse(service.Image)
 	if err != nil {
-		logger.Error(fmt.Sprintf("error parsing image %s: %w", service.Image, err))
+		logger.Error(fmt.Sprintf("error parsing image %s: %v", service.Image, err))
 		return false
 	}
 
