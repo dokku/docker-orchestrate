@@ -326,6 +326,7 @@ func TestShouldSkipService(t *testing.T) {
 		shouldSkipDatabases bool
 		expectedResult      bool
 		labels              map[string]string
+		provider            *types.ServiceProviderConfig
 	}{
 		{
 			name:                "skip_databases_true_database_service",
@@ -411,6 +412,30 @@ func TestShouldSkipService(t *testing.T) {
 			expectedResult:      false,
 			labels:              nil,
 		},
+		{
+			name:                "provider_service_skipped",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      true,
+			labels:              nil,
+			provider:            &types.ServiceProviderConfig{Type: "awesomecloud"},
+		},
+		{
+			name:                "provider_service_takes_precedence_over_label",
+			image:               "nginx:alpine",
+			shouldSkipDatabases: false,
+			expectedResult:      true,
+			labels:              map[string]string{"com.dokku.orchestrate/skip": "false"},
+			provider:            &types.ServiceProviderConfig{Type: "awesomecloud"},
+		},
+		{
+			name:                "provider_service_takes_precedence_over_database",
+			image:               "postgres:14",
+			shouldSkipDatabases: true,
+			expectedResult:      true,
+			labels:              nil,
+			provider:            &types.ServiceProviderConfig{Type: "awesomecloud"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -423,6 +448,10 @@ func TestShouldSkipService(t *testing.T) {
 
 			if tt.labels != nil {
 				service.Labels = tt.labels
+			}
+
+			if tt.provider != nil {
+				service.Provider = tt.provider
 			}
 
 			result := shouldSkipService(service, tt.shouldSkipDatabases, logger)
