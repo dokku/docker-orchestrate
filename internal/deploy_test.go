@@ -492,7 +492,11 @@ func TestShouldSkipService(t *testing.T) {
 				service.Models = tt.models
 			}
 
-			result := shouldSkipService(service, tt.shouldSkipDatabases, logger)
+			result := shouldSkipService(ShouldSkipServiceInput{
+				Service:             service,
+				ShouldSkipDatabases: tt.shouldSkipDatabases,
+				Logger:              logger,
+			})
 
 			if result != tt.expectedResult {
 				t.Errorf("shouldSkipService() = %v, want %v for image %s with shouldSkipDatabases=%v", result, tt.expectedResult, tt.image, tt.shouldSkipDatabases)

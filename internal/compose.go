@@ -601,6 +601,8 @@ type ScaleDownContainersInput struct {
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
+	// SkipDatabases is whether to skip interacting with databases
+	SkipDatabases bool
 	// PreStopHostCommand is the command to run before stopping a container
 	PreStopHostCommand string
 	// PostStopHostCommand is the command to run after stopping a container
@@ -610,12 +612,27 @@ type ScaleDownContainersInput struct {
 // scaleDownContainers scales down containers by stopping and removing excess ones
 // It always removes the oldest containers first
 func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) error {
-	input.Logger.Info(fmt.Sprintf("Scaling down containers: current-replicas=%d, target-replicas=%d", input.CurrentReplicas, input.DesiredReplicas))
 	toRemove := input.CurrentReplicas - input.DesiredReplicas
 
 	if toRemove <= 0 {
 		return nil
 	}
+
+	if input.CurrentReplicas == 0 {
+		return nil
+	}
+
+	skipService := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+		Container:           input.CurrentContainers[0],
+		ServiceName:         input.ServiceName,
+		ShouldSkipDatabases: input.SkipDatabases,
+		Logger:              input.Logger,
+	})
+	if skipService {
+		return nil
+	}
+
+	input.Logger.Info(fmt.Sprintf("Scaling down containers: current-replicas=%d, target-replicas=%d", input.CurrentReplicas, input.DesiredReplicas))
 
 	// Sort containers by creation time to ensure we remove the oldest ones
 	sortContainersByCreationTime(input.CurrentContainers, false)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/compose"
+	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
 	parser "github.com/novln/docker-parser"
 )
@@ -52,6 +54,63 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 			ProjectName:           input.ProjectName,
 			ServiceName:           serviceName,
 			SkipDatabases:         input.SkipDatabases,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return RemoveMissingServices(ctx, input, orderedServices)
+}
+
+func RemoveMissingServices(ctx context.Context, input DeployProjectInput, orderedServices []string) error {
+	// Query all containers with the project label
+	allContainers, err := composeContainers(ComposeContainersInput{
+		Client:      input.Client,
+		ProjectName: input.ProjectName,
+	})
+	if err != nil {
+		return fmt.Errorf("error querying containers: %v", err)
+	}
+
+	// Extract service names from containers and log any that aren't in orderedServices
+	servicesToRemove := map[string]bool{}
+	for _, c := range allContainers {
+		if c.Labels != nil {
+			if serviceName, ok := c.Labels["com.docker.compose.service"]; ok {
+				if slices.Contains(orderedServices, serviceName) {
+					continue
+				}
+				servicesToRemove[serviceName] = true
+			}
+		}
+	}
+
+	for serviceName := range servicesToRemove {
+		currentContainers, err := composeContainers(ComposeContainersInput{
+			Client:      input.Client,
+			ProjectName: input.ProjectName,
+			ServiceName: serviceName,
+			Status:      "running",
+		})
+		if err != nil {
+			return fmt.Errorf("error getting current containers: %v", err)
+		}
+
+		input.Logger.LogHeader2(fmt.Sprintf("Removing service %s", serviceName))
+		err = scaleDownContainers(ctx, ScaleDownContainersInput{
+			Client:              input.Client,
+			ComposeFile:         input.ComposeFile,
+			CurrentContainers:   currentContainers,
+			CurrentReplicas:     len(currentContainers),
+			DesiredReplicas:     0,
+			Executor:            input.Executor,
+			Logger:              input.Logger,
+			PostStopHostCommand: "",
+			PreStopHostCommand:  "",
+			ProjectName:         input.ProjectName,
+			ServiceName:         serviceName,
+			SkipDatabases:       input.SkipDatabases,
 		})
 		if err != nil {
 			return err
@@ -114,7 +173,12 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		return fmt.Errorf("service %s not found in compose file", input.ServiceName)
 	}
 
-	if shouldSkipService(service, input.SkipDatabases, input.Logger) {
+	skipService := shouldSkipService(ShouldSkipServiceInput{
+		Service:             service,
+		ShouldSkipDatabases: input.SkipDatabases,
+		Logger:              input.Logger,
+	})
+	if skipService {
 		return nil
 	}
 
@@ -367,36 +431,81 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	return dependencyOrder, nil
 }
 
-// shouldSkipService returns true if the service should be skipped
-func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, logger *command.ZerologUi) bool {
-	// skip model services
-	if len(service.Models) > 0 {
-		logger.Info(fmt.Sprintf("Skipping model service: service=%s", service.Name))
-		return true
-	}
+// ShouldSkipScaleDownServiceInput is the input for the shouldSkipScaleDownService function
+type ShouldSkipScaleDownServiceInput struct {
+	// Container is the container to check
+	Container container.Summary
+	// ServiceName is the name of the service
+	ServiceName string
+	// ShouldSkipDatabases is whether to skip interacting with databases
+	ShouldSkipDatabases bool
+	// Logger is the logger to use
+	Logger *command.ZerologUi
+}
 
-	// skip provider services
-	if service.Provider != nil {
-		logger.Info(fmt.Sprintf("Skipping provider service: service=%s", service.Name))
-		return true
-	}
-
-	// Check for skip label
-	if service.Labels != nil {
-		if skipValue, ok := service.Labels["com.dokku.orchestrate/skip"]; ok && skipValue == "true" {
-			logger.Info(fmt.Sprintf("Skipping service with skip label: service=%s", service.Name))
+// shouldSkipScaleDownService returns true if the service should be skipped
+func shouldSkipScaleDownService(input ShouldSkipScaleDownServiceInput) bool {
+	if input.Container.Labels != nil {
+		if skipValue, ok := input.Container.Labels["com.dokku.orchestrate/skip"]; ok && skipValue == "true" {
+			input.Logger.Info(fmt.Sprintf("Skipping service with skip label: service=%s", input.ServiceName))
 			return true
 		}
 	}
 
-	if shouldSkipDatabases && isDatabaseService(service, logger) {
+	if input.ShouldSkipDatabases && isDatabaseService(input.Container.Image, input.Logger) {
+		return true
+	}
+	return false
+}
+
+// ShouldSkipServiceInput is the input for the shouldSkipService function
+type ShouldSkipServiceInput struct {
+	// Logger is the logger to use
+	Logger *command.ZerologUi
+	// Service is the service configuration
+	Service *types.ServiceConfig
+	// ShouldSkipDatabases is whether to skip deploying databases
+	ShouldSkipDatabases bool
+	// SilenceLogging is whether to silence logging
+	SilenceLogging bool
+}
+
+// shouldSkipService returns true if the service should be skipped
+func shouldSkipService(input ShouldSkipServiceInput) bool {
+	// skip model services
+	if len(input.Service.Models) > 0 {
+		if !input.SilenceLogging {
+			input.Logger.Info(fmt.Sprintf("Skipping model service: service=%s", input.Service.Name))
+		}
+		return true
+	}
+
+	// skip provider services
+	if input.Service.Provider != nil {
+		if !input.SilenceLogging {
+			input.Logger.Info(fmt.Sprintf("Skipping provider service: service=%s", input.Service.Name))
+		}
+		return true
+	}
+
+	// Check for skip label
+	if input.Service.Labels != nil {
+		if skipValue, ok := input.Service.Labels["com.dokku.orchestrate/skip"]; ok && skipValue == "true" {
+			if !input.SilenceLogging {
+				input.Logger.Info(fmt.Sprintf("Skipping service with skip label: service=%s", input.Service.Name))
+			}
+			return true
+		}
+	}
+
+	if input.ShouldSkipDatabases && isDatabaseService(input.Service.Image, input.Logger) {
 		return true
 	}
 	return false
 }
 
 // isDatabaseService returns true if the service is a database service
-func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) bool {
+func isDatabaseService(serviceImage string, logger *command.ZerologUi) bool {
 	databaseImageRepositories := []string{
 		"clickhouse/clickhouse-server",
 		"library/couchdb",
@@ -417,9 +526,9 @@ func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) 
 		"library/solr",
 		"typesense/typesense",
 	}
-	parsedImage, err := parser.Parse(service.Image)
+	parsedImage, err := parser.Parse(serviceImage)
 	if err != nil {
-		logger.Error(fmt.Sprintf("error parsing image %s: %v", service.Image, err))
+		logger.Error(fmt.Sprintf("error parsing image %s: %v", serviceImage, err))
 		return false
 	}
 

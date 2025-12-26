@@ -31,8 +31,7 @@ services:
           exit 0
     depends_on:
       db:
-        condition: service_healthy
-        restart: true
+        condition: service_started
       redis:
         condition: service_started
   redis:
