@@ -44,6 +44,13 @@ docker orchestrate deploy --profile production --profile monitoring
 docker orchestrate deploy --profile production,monitoring
 ```
 
+Deploy while skipping database services:
+
+```bash
+docker orchestrate deploy --skip-databases
+docker orchestrate deploy web --skip-databases
+```
+
 ### Arguments
 
 - `service-name`: The name of a service in the compose file to deploy
@@ -56,6 +63,7 @@ docker orchestrate deploy --profile production,monitoring
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
 - `--profile`: One or more profiles to enable. Can be specified multiple times or as a comma-separated list.
 - `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
+- `--skip-databases`: Skip deploying database services - as detected by image - when deploying the entire project or a specific service.
 
 ## Script Extensions
 
@@ -102,6 +110,31 @@ Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-h
 - `.ContainerShortID`: First 12 characters of the container ID.
 - `.ContainerIP`: Internal IP address of the container.
 - `.ServiceName`: Name of the service.
+
+### Detected Database Services
+
+When using the `--skip-databases` flag, `docker-orchestrate` automatically detects database services by examining the service's image repository. A service is considered a database if its image matches any of the following repositories:
+
+- `clickhouse/clickhouse-server`
+- `couchdb` (library/couchdb)
+- `elasticsearch` (library/elasticsearch)
+- `dokku/docker-grafana-graphite`
+- `mariadb`
+- `getmeili/meilisearch`
+- `memcached` (library/memcached)
+- `mongo` (library/mongo)
+- `mysql` (library/mysql)
+- `nats` (library/nats)
+- `omnisci/core-os-cpu`
+- `postgres` (library/postgres)
+- `fanout/pushpin`
+- `rabbitmq` (library/rabbitmq)
+- `redis` (library/redis)
+- `rethinkdb` (library/rethinkdb)
+- `solr` (library/solr)
+- `typesense/typesense`
+
+Detection is based on the image repository name (short name), so it works regardless of the image tag or registry. For example, both `postgres:14` and `myregistry.com/library/postgres:latest` would be detected as database services.
 
 ## Caveats
 

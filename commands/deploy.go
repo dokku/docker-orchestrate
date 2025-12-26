@@ -21,6 +21,7 @@ type DeployCommand struct {
 	projectDirectory      string
 	projectName           string
 	replicas              int
+	skipDatabases         bool
 }
 
 func (c *DeployCommand) Name() string {
@@ -70,6 +71,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.StringVar(&c.file, "file", "", "the path to the Compose file")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
+	f.BoolVar(&c.skipDatabases, "skip-databases", false, "whether to skip deploying databases")
 	return f
 }
 
@@ -83,6 +85,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 			"--project-directory":       complete.PredictDirs("*"),
 			"--project-name":            complete.PredictAnything,
 			"--replicas":                complete.PredictAnything,
+			"--skip-databases":          complete.PredictNothing,
 		},
 	)
 }
@@ -153,6 +156,7 @@ func (c *DeployCommand) Run(args []string) int {
 			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
+			SkipDatabases:         c.skipDatabases,
 		})
 		if err != nil {
 			c.Ui.Error(err.Error())
@@ -172,6 +176,7 @@ func (c *DeployCommand) Run(args []string) int {
 		ProjectName:           c.projectName,
 		Replicas:              c.replicas,
 		ServiceName:           serviceName,
+		SkipDatabases:         c.skipDatabases,
 	})
 	if err != nil {
 		c.Ui.Error(err.Error())

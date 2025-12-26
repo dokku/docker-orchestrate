@@ -10,7 +10,9 @@ require (
 	github.com/fatih/color v1.18.0
 	github.com/josegonzalez/cli-skeleton v0.24.0
 	github.com/mitchellh/cli v1.1.5
+	github.com/novln/docker-parser v1.0.0
 	github.com/posener/complete v1.2.3
+	github.com/rs/zerolog v1.34.0
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/sync v0.19.0
 )
@@ -111,7 +113,6 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/rs/zerolog v1.34.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.9.1 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
