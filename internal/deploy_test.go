@@ -47,11 +47,11 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 			expectedReplicas: 5,
 		},
 		{
-			name:           "no_replicas_defined_error",
-			inputReplicas:  0,
-			deployReplicas: nil,
-			scaleReplicas:  nil,
-			expectError:    true,
+			name:             "no_replicas_defined_defaults_to_one",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    nil,
+			expectedReplicas: 1,
 		},
 	}
 
