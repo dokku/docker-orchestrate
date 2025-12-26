@@ -4,7 +4,7 @@ services:
     image: nginx:latest
     profiles: [web]
     deploy:
-      replicas: 8
+      replicas: 2
       update_config:
         parallelism: 4
         delay: 0s
@@ -29,3 +29,22 @@ services:
           echo "It can also be used to update other systems that are tracking containers within the docker compose project"
           echo 'Post-start command running on host'
           exit 0
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+      redis:
+        condition: service_started
+  redis:
+    image: redis
+    depends_on:
+      nginx-first:
+        condition: service_started
+  nginx-first:
+    image: nginx:latest
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres
