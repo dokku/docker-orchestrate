@@ -155,6 +155,25 @@ When a service has this label set to `"true"`, it will be skipped during deploym
 
 **Note**: The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` will not trigger skipping.
 
+### Skipping Provider Services
+
+Services that use external providers (defined via the `provider` field) are automatically skipped during deployment. Provider services are typically managed by external systems (like cloud providers) and should not be deployed by `docker-orchestrate`.
+
+```yaml
+services:
+  database:
+    provider:
+      type: awesomecloud
+      options:
+        type: mysql
+        foo: bar
+  web:
+    image: nginx:alpine
+    # This service will be deployed normally
+```
+
+Provider services are skipped before any other skip checks (labels or database detection), ensuring they are never deployed regardless of other configuration.
+
 ## Caveats
 
 - **Single-node focus**: `docker orchestrate` is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
