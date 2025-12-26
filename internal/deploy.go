@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/josegonzalez/cli-skeleton/command"
+	parser "github.com/novln/docker-parser"
 )
 
 // DeployProjectInput is the input for the DeployProject function
@@ -29,6 +31,8 @@ type DeployProjectInput struct {
 	Project *types.Project
 	// ProjectName is the name of the project
 	ProjectName string
+	// SkipDatabases is whether to skip deploying databases
+	SkipDatabases bool
 }
 
 // DeployProject deploys a project
@@ -54,6 +58,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 				Project:               input.Project,
 				ProjectName:           input.ProjectName,
 				ServiceName:           service.Name,
+				SkipDatabases:         input.SkipDatabases,
 			})
 			if err != nil {
 				return err
@@ -93,6 +98,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 			Project:               input.Project,
 			ProjectName:           input.ProjectName,
 			ServiceName:           serviceName,
+			SkipDatabases:         input.SkipDatabases,
 		})
 		if err != nil {
 			return err
@@ -122,6 +128,8 @@ type DeployServiceInput struct {
 	Replicas int
 	// ServiceName is the name of the service
 	ServiceName string
+	// SkipDatabases is whether to skip deploying databases
+	SkipDatabases bool
 }
 
 // DeployService deploys a single service
@@ -151,6 +159,10 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 	if service == nil {
 		return fmt.Errorf("service %s not found in compose file", input.ServiceName)
+	}
+
+	if shouldSkipService(service, input.SkipDatabases, input.Logger) {
+		return nil
 	}
 
 	// get the number of containers that should be running
@@ -377,4 +389,48 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 
 	input.Logger.Info(fmt.Sprintf("Deployment complete: service=%s, expected=%d, actual=%d failures=%d", input.ServiceName, replicas, len(finalContainers), rollingUpdateOutput.Failures))
 	return nil
+}
+
+func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, logger *command.ZerologUi) bool {
+	if shouldSkipDatabases && isDatabaseService(service, logger) {
+		return true
+	}
+	return false
+}
+
+func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) bool {
+	databaseImageRepositories := []string{
+		"clickhouse/clickhouse-server",
+		"library/couchdb",
+		"library/elasticsearch",
+		"dokku/docker-grafana-graphite",
+		"mariadb",
+		"getmeili/meilisearch",
+		"library/memcached",
+		"library/mongo",
+		"library/mysql",
+		"library/nats",
+		"omnisci/core-os-cpu",
+		"library/postgres",
+		"fanout/pushpin",
+		"library/rabbitmq",
+		"library/redis",
+		"library/rethinkdb",
+		"library/solr",
+		"typesense/typesense",
+	}
+	parsedImage, err := parser.Parse(service.Image)
+	if err != nil {
+		logger.Error(fmt.Sprintf("error parsing image %s: %w", service.Image, err))
+		return false
+	}
+
+	for _, databaseImageRepository := range databaseImageRepositories {
+		if parsedImage.ShortName() == databaseImageRepository {
+			logger.Info(fmt.Sprintf("Skipping detected database service: image=%s", strings.TrimPrefix(parsedImage.ShortName(), "library/")))
+			return true
+		}
+	}
+
+	return false
 }
