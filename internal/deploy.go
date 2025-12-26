@@ -142,14 +142,19 @@ func DeployService(input DeployServiceInput) error {
 	}
 
 	// Get update_config settings
-	updateConfig := service.Deploy.UpdateConfig
+	var updateConfig *types.UpdateConfig
+	if service.Deploy != nil && service.Deploy.UpdateConfig != nil {
+		updateConfig = service.Deploy.UpdateConfig
+	}
 	if updateConfig == nil {
 		// Default update config if not specified
 		parallelismVal := uint64(1)
 		updateConfig = &types.UpdateConfig{
-			Parallelism: &parallelismVal,
-			Delay:       types.Duration(10 * time.Second),
-			Monitor:     types.Duration(5 * time.Second),
+			Parallelism:   &parallelismVal,
+			Delay:         types.Duration(10 * time.Second),
+			FailureAction: "pause",
+			Monitor:       types.Duration(5 * time.Second),
+			Order:         "start-first",
 		}
 	}
 
