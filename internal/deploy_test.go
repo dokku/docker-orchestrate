@@ -632,3 +632,136 @@ func TestOrderServices(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceReplicas(t *testing.T) {
+	threeReplicas := 3
+	fiveReplicas := 5
+	tenReplicas := 10
+
+	tests := []struct {
+		name             string
+		inputReplicas    int
+		deployReplicas   *int
+		scaleReplicas    *int
+		expectedReplicas int
+	}{
+		{
+			name:             "override_specified",
+			inputReplicas:    10,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 10,
+		},
+		{
+			name:             "no_override_use_deploy_replicas",
+			inputReplicas:    0,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 3,
+		},
+		{
+			name:             "no_override_no_deploy_use_scale",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 5,
+		},
+		{
+			name:             "no_replicas_defined_defaults_to_one",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    nil,
+			expectedReplicas: 1,
+		},
+		{
+			name:             "override_zero_ignored",
+			inputReplicas:    0,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 3,
+		},
+		{
+			name:             "override_negative_ignored",
+			inputReplicas:    -1,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 3,
+		},
+		{
+			name:             "deploy_replicas_zero_is_valid",
+			inputReplicas:    0,
+			deployReplicas:   func() *int { z := 0; return &z }(),
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 0,
+		},
+		{
+			name:             "deploy_replicas_zero_no_scale_is_zero",
+			inputReplicas:    0,
+			deployReplicas:   func() *int { z := 0; return &z }(),
+			scaleReplicas:    nil,
+			expectedReplicas: 0,
+		},
+		{
+			name:             "scale_zero_is_valid",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    func() *int { z := 0; return &z }(),
+			expectedReplicas: 0,
+		},
+		{
+			name:             "override_takes_precedence_over_all",
+			inputReplicas:    tenReplicas,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 10,
+		},
+		{
+			name:             "deploy_replicas_takes_precedence_over_scale",
+			inputReplicas:    0,
+			deployReplicas:   &threeReplicas,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 3,
+		},
+		{
+			name:             "service_with_no_deploy_config",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    &fiveReplicas,
+			expectedReplicas: 5,
+		},
+		{
+			name:             "service_with_no_deploy_config_no_scale",
+			inputReplicas:    0,
+			deployReplicas:   nil,
+			scaleReplicas:    nil,
+			expectedReplicas: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &types.ServiceConfig{
+				Name: "test-service",
+			}
+
+			if tt.deployReplicas != nil {
+				service.Deploy = &types.DeployConfig{
+					Replicas: tt.deployReplicas,
+				}
+			}
+
+			service.Scale = tt.scaleReplicas
+
+			input := DeployServiceInput{
+				Replicas: tt.inputReplicas,
+			}
+
+			result := ServiceReplicas(input, service)
+
+			if result != tt.expectedReplicas {
+				t.Errorf("ServiceReplicas() = %d, want %d for inputReplicas=%d, deployReplicas=%v, scaleReplicas=%v",
+					result, tt.expectedReplicas, tt.inputReplicas, tt.deployReplicas, tt.scaleReplicas)
+			}
+		})
+	}
+}

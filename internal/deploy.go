@@ -118,25 +118,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		return nil
 	}
 
-	// get the number of containers that should be running
-	//   from the `input.Replicas` field if specified
-	//   or the `service.[service-name].deploy.replicas` field in the compose file
-	//   or the `service.[service-name].scale` field in the compose file
-	//   or 1 if none of the above are specified
-	var replicas int
-	if input.Replicas > 0 {
-		replicas = input.Replicas
-	}
-
-	if replicas == 0 {
-		if service.Deploy != nil && service.Deploy.Replicas != nil {
-			replicas = int(*service.Deploy.Replicas)
-		} else if service.Scale != nil {
-			replicas = int(*service.Scale)
-		} else {
-			replicas = 1
-		}
-	}
+	replicas := ServiceReplicas(input, service)
 
 	// Get update_config settings
 	var updateConfig *types.UpdateConfig
@@ -429,4 +411,29 @@ func isDatabaseService(service *types.ServiceConfig, logger *command.ZerologUi) 
 	}
 
 	return false
+}
+
+// ServiceReplicas returns the number of containers that should be running
+// get the number of containers that should be running
+//
+//	from the `input.Replicas` field if specified
+//	or the `service.[service-name].deploy.replicas` field in the compose file
+//	or the `service.[service-name].scale` field in the compose file
+//	or 1 if none of the above are specified
+func ServiceReplicas(input DeployServiceInput, service *types.ServiceConfig) int {
+	var replicas int
+	if input.Replicas > 0 {
+		replicas = input.Replicas
+	}
+
+	if replicas == 0 {
+		if service.Deploy != nil && service.Deploy.Replicas != nil {
+			replicas = int(*service.Deploy.Replicas)
+		} else if service.Scale != nil {
+			replicas = int(*service.Scale)
+		} else {
+			replicas = 1
+		}
+	}
+	return replicas
 }
