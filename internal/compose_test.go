@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
-	mcli "github.com/mitchellh/cli"
+	"github.com/josegonzalez/cli-skeleton/command"
+	"github.com/rs/zerolog"
 )
 
 func TestSortContainersByCreationTime(t *testing.T) {
@@ -308,7 +309,14 @@ func TestRenameContainersToConvention(t *testing.T) {
 
 func TestRollingUpdateBatchStopFirst(t *testing.T) {
 	ctx := context.Background()
-	logger := &mcli.MockUi{}
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
 
 	t.Run("successful rolling update stop-first", func(t *testing.T) {
 		terminatedIds := make([]string, 0)
@@ -455,7 +463,14 @@ func testTickerCh() <-chan time.Time {
 
 func TestRollingUpdateContainers(t *testing.T) {
 	ctx := context.Background()
-	logger := &mcli.MockUi{}
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
 
 	t.Run("batching and start-first strategy", func(t *testing.T) {
 		terminatedIds := make([]string, 0)
@@ -619,7 +634,14 @@ func TestRollingUpdateContainers(t *testing.T) {
 
 func TestRollingUpdateBatchStartFirst(t *testing.T) {
 	ctx := context.Background()
-	logger := &mcli.MockUi{}
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
 
 	t.Run("successful rolling update start-first", func(t *testing.T) {
 		terminatedIds := make([]string, 0)
@@ -761,7 +783,14 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 
 func TestScaleDownContainers(t *testing.T) {
 	ctx := context.Background()
-	logger := &mcli.MockUi{}
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
 
 	t.Run("successful scale down", func(t *testing.T) {
 		terminatedIds := make([]string, 0)
@@ -834,7 +863,14 @@ func TestScaleDownContainers(t *testing.T) {
 
 func TestScaleUpContainers(t *testing.T) {
 	ctx := context.Background()
-	logger := &mcli.MockUi{}
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
 
 	t.Run("successful scale up", func(t *testing.T) {
 		mock := &mockDockerClient{
