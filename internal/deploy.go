@@ -22,6 +22,8 @@ type DeployProjectInput struct {
 	Executor CommandExecutor
 	// Logger is the logger to use
 	Logger cli.Ui
+	// Profiles is the profiles to enable
+	Profiles []string
 	// Project is the project configuration
 	Project *types.Project
 	// ProjectName is the name of the project

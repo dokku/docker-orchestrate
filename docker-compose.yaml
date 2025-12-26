@@ -2,6 +2,7 @@
 services:
   web:
     image: nginx:latest
+    profiles: [web]
     deploy:
       replicas: 8
       update_config:

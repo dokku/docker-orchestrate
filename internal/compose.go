@@ -48,14 +48,17 @@ func ComposeFile() (string, error) {
 
 // ComposeProject reads the compose file specified by the filename
 // and returns the compose types.Project
-func ComposeProject(filename string) (*types.Project, error) {
+func ComposeProject(projectName string, filename string, profiles []string) (*types.Project, error) {
 	ctx := context.Background()
 
-	options, err := cli.NewProjectOptions(
-		[]string{filename},
+	opts := []cli.ProjectOptionsFn{
 		cli.WithOsEnv,
 		cli.WithDotEnv,
-	)
+		cli.WithDefaultProfiles(profiles...),
+		cli.WithName(projectName),
+	}
+
+	options, err := cli.NewProjectOptions([]string{filename}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating project options: %v", err)
 	}
