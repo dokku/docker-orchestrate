@@ -36,6 +36,14 @@ Deploy a service with a specific number of replicas:
 docker orchestrate deploy web --replicas 5
 ```
 
+Deploy with one or more profiles enabled:
+
+```bash
+docker orchestrate deploy --profile production
+docker orchestrate deploy --profile production --profile monitoring
+docker orchestrate deploy --profile production,monitoring
+```
+
 ### Arguments
 
 - `service-name`: The name of a service in the compose file to deploy
@@ -46,6 +54,7 @@ docker orchestrate deploy web --replicas 5
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
 - `--project-directory`: Specify an alternate working directory.
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
+- `--profile`: One or more profiles to enable. Can be specified multiple times or as a comma-separated list.
 - `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
 
 ## Script Extensions

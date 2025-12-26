@@ -14,10 +14,11 @@ import (
 type DeployCommand struct {
 	command.Meta
 
+	containerNameTemplate string
 	file                  string
+	profiles              []string
 	projectDirectory      string
 	projectName           string
-	containerNameTemplate string
 	replicas              int
 }
 
@@ -62,11 +63,12 @@ func (c *DeployCommand) ParsedArguments(args []string) (map[string]command.Argum
 
 func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f := c.Meta.FlagSet(c.Name(), command.FlagSetClient)
+	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
+	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
+	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
 	f.StringVar(&c.file, "file", "", "the path to the Compose file")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
-	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
-	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	return f
 }
 
@@ -74,10 +76,11 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 	return command.MergeAutocompleteFlags(
 		c.Meta.AutocompleteFlags(command.FlagSetClient),
 		complete.Flags{
+			"--container-name-template": complete.PredictAnything,
 			"--file":                    complete.PredictFiles("*"),
+			"--profiles":                complete.PredictAnything,
 			"--project-directory":       complete.PredictDirs("*"),
 			"--project-name":            complete.PredictAnything,
-			"--container-name-template": complete.PredictAnything,
 			"--replicas":                complete.PredictAnything,
 		},
 	)
@@ -115,7 +118,7 @@ func (c *DeployCommand) Run(args []string) int {
 		c.projectName = filepath.Base(filepath.Dir(c.file))
 	}
 
-	project, err := internal.ComposeProject(c.file)
+	project, err := internal.ComposeProject(c.projectName, c.file, c.profiles)
 	if err != nil {
 		c.Ui.Error(err.Error())
 		return 1
