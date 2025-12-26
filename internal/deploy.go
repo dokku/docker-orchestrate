@@ -369,6 +369,14 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 
 // shouldSkipService returns true if the service should be skipped
 func shouldSkipService(service *types.ServiceConfig, shouldSkipDatabases bool, logger *command.ZerologUi) bool {
+	// Check for skip label
+	if service.Labels != nil {
+		if skipValue, ok := service.Labels["com.dokku.orchestrate/skip"]; ok && skipValue == "true" {
+			logger.Info(fmt.Sprintf("Skipping service with skip label: service=%s", service.Name))
+			return true
+		}
+	}
+
 	if shouldSkipDatabases && isDatabaseService(service, logger) {
 		return true
 	}
