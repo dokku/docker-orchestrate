@@ -17,7 +17,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	mcli "github.com/mitchellh/cli"
+	"github.com/josegonzalez/cli-skeleton/command"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -130,7 +130,7 @@ type RollingUpdateInput struct {
 	// HealthcheckCommand is the command to run for health checks
 	HealthcheckCommand string
 	// Logger is the logger to use
-	Logger mcli.Ui
+	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
 	MaxFailureRatio float32
 	// Monitor is the health check monitoring duration
@@ -165,7 +165,7 @@ type RollingUpdateOutput struct {
 
 // rollingUpdateContainers performs a rolling update on a list of containers
 func rollingUpdateContainers(ctx context.Context, input RollingUpdateInput) (RollingUpdateOutput, error) {
-	input.Logger.Output(fmt.Sprintf("Starting rolling update existing containers: current-replicas=%d, delay=%v, parallelism=%d, order=%s, target-replicas=%d", input.CurrentReplicas, input.Delay, input.Parallelism, input.Order, input.DesiredReplicas))
+	input.Logger.Info(fmt.Sprintf("Starting rolling update existing containers: current-replicas=%d, delay=%v, parallelism=%d, order=%s, target-replicas=%d", input.CurrentReplicas, input.Delay, input.Parallelism, input.Order, input.DesiredReplicas))
 
 	if input.Executor == nil {
 		input.Executor = ExecCommand
@@ -201,7 +201,7 @@ func rollingUpdateContainers(ctx context.Context, input RollingUpdateInput) (Rol
 
 		// Wait for delay between batches (except for the last batch)
 		if i+batchSize < len(input.ContainersToUpdate) && input.Delay > 0 {
-			input.Logger.Output(fmt.Sprintf("Waiting before next batch: %v", input.Delay))
+			input.Logger.Info(fmt.Sprintf("Waiting before next batch: %v", input.Delay))
 			input.Sleeper(input.Delay)
 		}
 	}
@@ -295,7 +295,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 			output.TotalUpdates++
 			mu.Unlock()
 
-			input.Logger.Output(fmt.Sprintf("Waiting for container to become healthy: %s", newContainer.ID[:12]))
+			input.Logger.Info(fmt.Sprintf("Waiting for container to become healthy: %s", newContainer.ID[:12]))
 			healthcheckInput := WaitForHealthcheckInput{
 				Client:             input.Client,
 				ContainerID:        newContainer.ID,
@@ -307,11 +307,11 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 			}
 
 			if err := waitForHealthcheck(ctx, healthcheckInput); err != nil {
-				input.Logger.Output(fmt.Sprintf("Container %s failed health check, stopping", newContainer.ID[:12]))
+				input.Logger.Info(fmt.Sprintf("Container %s failed health check: %v", newContainer.ID[:12], err))
 				if eo, ok := err.(*ErrorWithOutput); ok {
 					lines := strings.Split(eo.Output, "\n")
 					for _, line := range lines {
-						input.Logger.Output(fmt.Sprintf("    %s", line))
+						input.Logger.Info(fmt.Sprintf("    %s", line))
 					}
 				}
 
@@ -355,7 +355,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					}
 				}
 
-				input.Logger.Output(fmt.Sprintf("Container %s is healthy, stopping %s", newContainer.ID[:12], oldContainerIdentifier))
+				input.Logger.Info(fmt.Sprintf("Container %s is healthy, stopping %s", newContainer.ID[:12], oldContainerIdentifier))
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: oldContainer.ID,
@@ -365,7 +365,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ScriptType:  "pre-stop",
 				})
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
-					input.Logger.Output(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
+					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
@@ -376,7 +376,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ScriptType:  "post-stop",
 				})
 			} else {
-				input.Logger.Output(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
+				input.Logger.Info(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
 			}
 		}(nc)
 	}
@@ -402,7 +402,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 
 // rollingUpdateBatchStopFirst stops the old containers first
 func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, batch []container.Summary, output *RollingUpdateOutput) error {
-	input.Logger.Output(fmt.Sprintf("Stopping %d old containers first", len(batch)))
+	input.Logger.Info(fmt.Sprintf("Stopping %d old containers first", len(batch)))
 
 	g, stopCtx := errgroup.WithContext(ctx)
 	for _, c := range batch {
@@ -415,7 +415,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 			}
 		}
 		g.Go(func() error {
-			input.Logger.Output(fmt.Sprintf("Stopping container %s", containerIdentifier))
+			input.Logger.Info(fmt.Sprintf("Stopping container %s", containerIdentifier))
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
@@ -516,7 +516,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 			output.TotalUpdates++
 			mu.Unlock()
 
-			input.Logger.Output(fmt.Sprintf("Waiting for container to become healthy: %s", newContainer.ID[:12]))
+			input.Logger.Info(fmt.Sprintf("Waiting for container to become healthy: %s", newContainer.ID[:12]))
 			healthcheckInput := WaitForHealthcheckInput{
 				Client:             input.Client,
 				ContainerID:        newContainer.ID,
@@ -528,11 +528,11 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 			}
 
 			if err := waitForHealthcheck(ctx, healthcheckInput); err != nil {
-				input.Logger.Output(fmt.Sprintf("Container %s failed health check, stopping: %v", newContainer.ID[:12], err))
+				input.Logger.Info(fmt.Sprintf("Container %s failed health check: %v", newContainer.ID[:12], err))
 				if eo, ok := err.(*ErrorWithOutput); ok {
 					lines := strings.Split(eo.Output, "\n")
 					for _, line := range lines {
-						input.Logger.Output(fmt.Sprintf("    %s", line))
+						input.Logger.Info(fmt.Sprintf("    %s", line))
 					}
 				}
 
@@ -559,7 +559,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				})
 				return
 			}
-			input.Logger.Output(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
+			input.Logger.Info(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
 		}(nc)
 	}
 
@@ -596,7 +596,7 @@ type ScaleDownContainersInput struct {
 	// Executor is the command executor to use. If nil, ExecCommand will be used.
 	Executor CommandExecutor
 	// Logger is the logger to use
-	Logger mcli.Ui
+	Logger *command.ZerologUi
 	// ProjectName is the name of the project
 	ProjectName string
 	// ServiceName is the name of the service
@@ -610,7 +610,7 @@ type ScaleDownContainersInput struct {
 // scaleDownContainers scales down containers by stopping and removing excess ones
 // It always removes the oldest containers first
 func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) error {
-	input.Logger.Output(fmt.Sprintf("Scaling down containers: current-replicas=%d, target-replicas=%d", input.CurrentReplicas, input.DesiredReplicas))
+	input.Logger.Info(fmt.Sprintf("Scaling down containers: current-replicas=%d, target-replicas=%d", input.CurrentReplicas, input.DesiredReplicas))
 	toRemove := input.CurrentReplicas - input.DesiredReplicas
 
 	if toRemove <= 0 {
@@ -630,7 +630,7 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 				break
 			}
 		}
-		input.Logger.Output(fmt.Sprintf("Stopping container %s", containerIdentifier))
+		input.Logger.Info(fmt.Sprintf("Stopping container %s", containerIdentifier))
 
 		executor := input.Executor
 		if executor == nil {
@@ -682,7 +682,7 @@ type ScaleUpContainersInput struct {
 	// HealthcheckCommand is the command to run for health checks
 	HealthcheckCommand string
 	// Logger is the logger to use
-	Logger mcli.Ui
+	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
 	MaxFailureRatio float32
 	// Monitor is the health check monitoring duration
@@ -705,7 +705,7 @@ type ScaleUpContainersInput struct {
 
 // scaleUpContainers scales up containers by creating and starting new ones
 func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error {
-	input.Logger.Output(fmt.Sprintf("Scaling up containers: current-replicas=%d, parallelism=%d, target-replicas=%d", input.CurrentReplicas, input.Parallelism, input.DesiredReplicas))
+	input.Logger.Info(fmt.Sprintf("Scaling up containers: service=%s, current-replicas=%d, parallelism=%d, target-replicas=%d", input.ServiceName, input.CurrentReplicas, input.Parallelism, input.DesiredReplicas))
 
 	executor := input.Executor
 	if executor == nil {
@@ -752,7 +752,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	}
 
 	if len(createdContainers) == 0 {
-		input.Logger.Output("No created containers to start")
+		input.Logger.Info("No created containers to start")
 		return nil
 	}
 
@@ -783,7 +783,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 				mu.Unlock()
 
 				if err := input.Client.ContainerStart(ctx, c.ID, container.StartOptions{}); err != nil {
-					input.Logger.Output(fmt.Sprintf("Error starting container %s: %v", c.ID[:12], err))
+					input.Logger.Info(fmt.Sprintf("Error starting container %s: %v", c.ID[:12], err))
 					mu.Lock()
 					failures++
 					if batchErr == nil {
@@ -794,7 +794,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 				}
 
 				// Wait for health check
-				input.Logger.Output(fmt.Sprintf("Waiting for container to become healthy: %s", c.ID[:12]))
+				input.Logger.Info(fmt.Sprintf("Waiting for container to become healthy: %s", c.ID[:12]))
 				healthcheckInput := WaitForHealthcheckInput{
 					Client:             input.Client,
 					ContainerID:        c.ID,
@@ -806,11 +806,11 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 				}
 
 				if err := waitForHealthcheck(ctx, healthcheckInput); err != nil {
-					input.Logger.Output(fmt.Sprintf("Container %s failed health check: %v", c.ID[:12], err))
+					input.Logger.Info(fmt.Sprintf("Container %s failed health check: %v", c.ID[:12], err))
 					if eo, ok := err.(*ErrorWithOutput); ok {
 						lines := strings.Split(eo.Output, "\n")
 						for _, line := range lines {
-							input.Logger.Output(fmt.Sprintf("    %s", line))
+							input.Logger.Info(fmt.Sprintf("    %s", line))
 						}
 					}
 
@@ -863,7 +863,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 
 		// Wait for delay between batches (except for the last batch)
 		if i+batchSize < len(createdContainers) && input.Delay > 0 {
-			input.Logger.Output(fmt.Sprintf("Waiting before next batch: %v", input.Delay))
+			input.Logger.Info(fmt.Sprintf("Waiting before next batch: %v", input.Delay))
 			time.Sleep(input.Delay)
 		}
 	}

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,19 +131,26 @@ func (c *DeployCommand) Run(args []string) int {
 		return 1
 	}
 
+	logger, ok := c.Ui.(*command.ZerologUi)
+	if !ok {
+		c.Ui.Error("UI is not a ZerologUi")
+		return 1
+	}
+
 	serviceName := arguments["service-name"].StringValue()
+	ctx := context.Background()
 	if serviceName == "" {
 		if c.replicas > 0 {
 			c.Ui.Error("--replicas flag requires a service name argument")
 			return 1
 		}
 
-		c.Ui.Output(fmt.Sprintf("Deploying entire project from %s", c.file))
-		err = internal.DeployProject(internal.DeployProjectInput{
+		logger.LogHeader1(fmt.Sprintf("Deploying entire project from %s", c.file))
+		err = internal.DeployProject(ctx, internal.DeployProjectInput{
 			Client:                client,
 			ComposeFile:           c.file,
 			ContainerNameTemplate: c.containerNameTemplate,
-			Logger:                c.Ui,
+			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
 		})
@@ -150,15 +158,16 @@ func (c *DeployCommand) Run(args []string) int {
 			c.Ui.Error(err.Error())
 			return 1
 		}
+		logger.Info("Entire project deployed")
 		return 0
 	}
 
-	c.Ui.Output(fmt.Sprintf("Deploying service %s", serviceName))
-	err = internal.DeployService(internal.DeployServiceInput{
+	logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
+	err = internal.DeployService(ctx, internal.DeployServiceInput{
 		Client:                client,
 		ComposeFile:           c.file,
 		ContainerNameTemplate: c.containerNameTemplate,
-		Logger:                c.Ui,
+		Logger:                logger,
 		Project:               project,
 		ProjectName:           c.projectName,
 		Replicas:              c.replicas,

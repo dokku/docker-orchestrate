@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -8,7 +9,8 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/mitchellh/cli"
+	"github.com/josegonzalez/cli-skeleton/command"
+	"github.com/rs/zerolog"
 )
 
 func TestDeployServiceReplicaOverride(t *testing.T) {
@@ -78,7 +80,14 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 				},
 			}
 
-			logger := cli.NewMockUi()
+			var buf bytes.Buffer
+			logger := &command.ZerologUi{
+				StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				OriginalFields:    nil,
+				Ui:                nil,
+				OutputIndentField: false,
+			}
 
 			input := DeployServiceInput{
 				Client:                mockClient,
@@ -92,7 +101,7 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 				ServiceName:           "web",
 			}
 
-			err := DeployService(input)
+			err := DeployService(context.Background(), input)
 
 			if tt.expectError {
 				if err == nil {
@@ -104,7 +113,7 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 			// Check if the output contains the expected target-replicas
 			expectedMsg := fmt.Sprintf("target-replicas=%d", tt.expectedReplicas)
 
-			output := logger.OutputWriter.String()
+			output := buf.String()
 			if !strings.Contains(output, expectedMsg) {
 				t.Errorf("expected replica count %d in output, but not found. Output: %s", tt.expectedReplicas, output)
 			}

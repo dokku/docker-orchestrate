@@ -8,7 +8,7 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/compose"
-	"github.com/mitchellh/cli"
+	"github.com/josegonzalez/cli-skeleton/command"
 )
 
 // DeployProjectInput is the input for the DeployProject function
@@ -22,7 +22,7 @@ type DeployProjectInput struct {
 	// Executor is the command executor to use
 	Executor CommandExecutor
 	// Logger is the logger to use
-	Logger cli.Ui
+	Logger *command.ZerologUi
 	// Profiles is the profiles to enable
 	Profiles []string
 	// Project is the project configuration
@@ -32,7 +32,7 @@ type DeployProjectInput struct {
 }
 
 // DeployProject deploys a project
-func DeployProject(input DeployProjectInput) error {
+func DeployProject(ctx context.Context, input DeployProjectInput) error {
 	// deploy each service in the project
 	// start with the web service if it exists, and then process everything else in dependency order
 	// if the web service has dependencies, skip it and deploy all services in dependency order
@@ -83,7 +83,8 @@ func DeployProject(input DeployProjectInput) error {
 			continue
 		}
 
-		err := DeployService(DeployServiceInput{
+		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
+		err = DeployService(ctx, DeployServiceInput{
 			Client:                input.Client,
 			ComposeFile:           input.ComposeFile,
 			ContainerNameTemplate: input.ContainerNameTemplate,
@@ -91,7 +92,7 @@ func DeployProject(input DeployProjectInput) error {
 			Logger:                input.Logger,
 			Project:               input.Project,
 			ProjectName:           input.ProjectName,
-			ServiceName:           service.Name,
+			ServiceName:           serviceName,
 		})
 		if err != nil {
 			return err
@@ -112,7 +113,7 @@ type DeployServiceInput struct {
 	// Executor is the command executor to use
 	Executor CommandExecutor
 	// Logger is the logger to use
-	Logger cli.Ui
+	Logger *command.ZerologUi
 	// Project is the project configuration
 	Project *types.Project
 	// ProjectName is the name of the project
@@ -124,7 +125,7 @@ type DeployServiceInput struct {
 }
 
 // DeployService deploys a single service
-func DeployService(input DeployServiceInput) error {
+func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if input.ComposeFile == "" {
 		return fmt.Errorf("compose file is required")
 	}
@@ -228,7 +229,6 @@ func DeployService(input DeployServiceInput) error {
 		}
 	}
 
-	ctx := context.Background()
 	projectDir := filepath.Dir(input.ComposeFile)
 
 	executor := input.Executor
@@ -375,6 +375,6 @@ func DeployService(input DeployServiceInput) error {
 		return fmt.Errorf("error renaming containers: %v", err)
 	}
 
-	input.Logger.Output(fmt.Sprintf("Deployment complete: expected=%d, actual=%d failures=%d", replicas, len(finalContainers), rollingUpdateOutput.Failures))
+	input.Logger.Info(fmt.Sprintf("Deployment complete: service=%s, expected=%d, actual=%d failures=%d", input.ServiceName, replicas, len(finalContainers), rollingUpdateOutput.Failures))
 	return nil
 }
