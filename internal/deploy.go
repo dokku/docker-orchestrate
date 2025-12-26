@@ -40,11 +40,11 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 	// deploy each service in the project
 	// start with the web service if it exists, and then process everything else in dependency order
 	// if the web service has dependencies, skip it and deploy all services in dependency order
-	skipWeb := false
+	skipWeb := true
 	for _, service := range input.Project.Services {
 		if service.Name == "web" {
-			if service.DependsOn != nil && len(service.DependsOn) > 0 {
-				skipWeb = true
+			if len(service.DependsOn) > 0 {
+				skipWeb = false
 				continue
 			}
 
@@ -84,10 +84,6 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 	}
 
 	for _, serviceName := range dependencyOrder {
-		if serviceName == "web" {
-			continue
-		}
-
 		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 		err = DeployService(ctx, DeployServiceInput{
 			Client:                input.Client,
