@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/mitchellh/cli"
 )
 
@@ -33,10 +34,18 @@ type DeployProjectInput struct {
 // DeployProject deploys a project
 func DeployProject(input DeployProjectInput) error {
 	// deploy each service in the project
-	// start with the web service if it exists, and then process everything else in alphabetical order
+	// start with the web service if it exists, and then process everything else in dependency order
+	// if the web service has dependencies, skip it and deploy all services in dependency order
+	skipWeb := false
 	for _, service := range input.Project.Services {
 		if service.Name == "web" {
-			err := DeployService(DeployServiceInput{
+			if service.DependsOn != nil && len(service.DependsOn) > 0 {
+				skipWeb = true
+				continue
+			}
+
+			input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", service.Name))
+			err := DeployService(ctx, DeployServiceInput{
 				Client:                input.Client,
 				ComposeFile:           input.ComposeFile,
 				ContainerNameTemplate: input.ContainerNameTemplate,
@@ -51,8 +60,26 @@ func DeployProject(input DeployProjectInput) error {
 			}
 		}
 	}
-	for _, service := range input.Project.Services {
-		if service.Name == "web" {
+
+	dependencyOrder := []string{}
+	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
+		if name == "web" && skipWeb {
+			return nil
+		}
+
+		service, err := input.Project.GetService(name)
+		if err != nil {
+			return err
+		}
+		dependencyOrder = append(dependencyOrder, service.Name)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, serviceName := range dependencyOrder {
+		if serviceName == "web" {
 			continue
 		}
 
