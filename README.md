@@ -65,6 +65,14 @@ docker orchestrate deploy web --skip-databases
 - `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
 - `--skip-databases`: Skip deploying database services - as detected by image - when deploying the entire project or a specific service.
 
+## Deployment Order
+
+When deploying a project, services are deployed in the following order:
+
+- If a `web` service exists with no dependencies, it is deployed first
+- All other services are deployed in dependency order (dependencies before dependents)
+- If the `web` service has dependencies, it follows normal dependency ordering
+
 ## Script Extensions
 
 In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.
@@ -258,10 +266,3 @@ services:
 ```
 
 Provider services are skipped before skip label and database detection checks (but after model services), ensuring they are never deployed regardless of other configuration.
-
-## Caveats
-
-- **Single-node focus**: `docker orchestrate` is designed for use with Docker Compose on a single Docker Engine. It is not intended for use with Docker Swarm.
-- **Script healthcheck locality**: The `x-healthcheck-host-command` script is executed on the host machine where the `docker orchestrate` command is run, not within the container itself. Use the `HEALTHCHECK` directive to run healthchecks within a container.
-- **Network connectivity**: For script healthchecks that rely on `.ContainerIP`, the host machine must have direct network access to the container's IP address (e.g., via the Docker bridge network).
-- **Failure Action**: Currently, only the `pause` `failure_action` is supported. Other `failure_action` values will cause `docker orchestrate` to exit non-zero. If a deployment fails, `docker orchestrate` will stop and leave the system in its current state.
