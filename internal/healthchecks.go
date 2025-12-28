@@ -1,12 +1,8 @@
 package internal
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"strings"
-	"text/template"
 	"time"
 )
 
@@ -19,18 +15,6 @@ type ErrorWithOutput struct {
 // Error returns the error message
 func (e *ErrorWithOutput) Error() string {
 	return e.Err.Error()
-}
-
-// ScriptTemplateData is the data structure for the healthcheck command template
-type ScriptTemplateData struct {
-	// ContainerID is the ID of the container
-	ContainerID string
-	// ContainerIP is the IP address of the container
-	ContainerIP string
-	// ContainerShortID is the short ID of the container
-	ContainerShortID string
-	// ServiceName is the name of the service
-	ServiceName string
 }
 
 // WaitForDockerHealthCheckInput is the input for the waitForDockerHealthCheck function
@@ -73,20 +57,6 @@ func waitForHealthcheck(ctx context.Context, input WaitForHealthcheckInput) erro
 		Script:      input.HealthcheckCommand,
 		ScriptType:  "healthcheck",
 	})
-}
-
-// RunStopCommandInput is the input for the stop command functions
-type RunStopCommandInput struct {
-	// Client is the Docker client to use.
-	Client DockerClientInterface
-	// ContainerID is the ID of the container to stop
-	ContainerID string
-	// Executor is the command executor to use.
-	Executor CommandExecutor
-	// ServiceName is the name of the service
-	ServiceName string
-	// Script is the command to run
-	Script string
 }
 
 // waitForDockerHealthCheck waits for a container to become healthy
@@ -141,144 +111,4 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 			}
 		}
 	}
-}
-
-type runScriptInput struct {
-	Client      DockerClientInterface
-	ContainerID string
-	Executor    CommandExecutor
-	ServiceName string
-	Script      string
-	ScriptType  string
-	Detached    bool
-}
-
-func runHostScript(ctx context.Context, input runScriptInput) error {
-	if input.Script == "" {
-		return nil
-	}
-
-	if input.Client == nil {
-		return fmt.Errorf("client is required")
-	}
-
-	if input.Executor == nil {
-		return fmt.Errorf("executor is required")
-	}
-
-	tmpl, err := template.New(input.ScriptType + "-command").Parse(input.Script)
-	if err != nil {
-		return fmt.Errorf("error parsing %s command template: %v", input.ScriptType, err)
-	}
-
-	containerIP, err := getContainerIP(ctx, input.Client, input.ContainerID)
-	if err != nil {
-		return fmt.Errorf("error getting container IP: %v", err)
-	}
-
-	containerShortID := input.ContainerID
-	if len(containerShortID) > 12 {
-		containerShortID = containerShortID[:12]
-	}
-
-	var commandBuf bytes.Buffer
-	data := ScriptTemplateData{
-		ContainerID:      input.ContainerID,
-		ContainerIP:      containerIP,
-		ContainerShortID: containerShortID,
-		ServiceName:      input.ServiceName,
-	}
-
-	if err := tmpl.Execute(&commandBuf, data); err != nil {
-		return fmt.Errorf("error executing %s command template: %v", input.ScriptType, err)
-	}
-
-	command := commandBuf.String()
-	if !strings.HasPrefix(command, "#!") {
-		command = "#!/usr/bin/env bash\n" + command
-	}
-
-	tempFile, err := os.CreateTemp("", input.ScriptType+"-*.script")
-	if err != nil {
-		return fmt.Errorf("error creating temporary %s script: %v", input.ScriptType, err)
-	}
-	tempFileName := tempFile.Name()
-
-	if _, err := tempFile.WriteString(command); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error writing %s command to temporary file: %v", input.ScriptType, err)
-	}
-	if err := tempFile.Close(); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error closing temporary %s file: %v", input.ScriptType, err)
-	}
-
-	if err := os.Chmod(tempFileName, 0755); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error making temporary %s script executable: %v", input.ScriptType, err)
-	}
-
-	// If detached, run the command asynchronously and return immediately
-	if input.Detached {
-		go func() {
-			// Use background context so the command continues even if the original context is cancelled
-			bgCtx := context.Background()
-			var output bytes.Buffer
-			_, err := input.Executor(bgCtx, ExecCommandInput{
-				Command:          tempFileName,
-				StdoutWriter:     &output,
-				StderrWriter:     &output,
-				WorkingDirectory: os.TempDir(),
-			})
-			// In detached mode, we don't report errors - the command runs independently
-			_ = err
-			// Clean up the temp file after the command completes
-			os.Remove(tempFileName)
-		}()
-		return nil
-	}
-
-	// Synchronous execution (default behavior) - clean up temp file when done
-	defer os.Remove(tempFileName)
-
-	// Synchronous execution (default behavior)
-	var output bytes.Buffer
-	_, err = input.Executor(ctx, ExecCommandInput{
-		Command:          tempFile.Name(),
-		StdoutWriter:     &output,
-		StderrWriter:     &output,
-		WorkingDirectory: os.TempDir(),
-	})
-	if err != nil {
-		return &ErrorWithOutput{
-			Err:    fmt.Errorf("%s command failed for container %s: %v", input.ScriptType, containerShortID, err),
-			Output: strings.TrimSpace(output.String()),
-		}
-	}
-
-	return nil
-}
-
-func getContainerIP(ctx context.Context, client DockerClientInterface, containerID string) (string, error) {
-	containerJSON, err := client.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return "", fmt.Errorf("error inspecting container: %v", err)
-	}
-
-	containerIP := ""
-	if containerJSON.ContainerJSONBase != nil && containerJSON.HostConfig != nil && containerJSON.HostConfig.NetworkMode.IsHost() {
-		containerIP = "127.0.0.1"
-	} else if containerJSON.NetworkSettings != nil {
-		for networkName, network := range containerJSON.NetworkSettings.Networks {
-			if containerJSON.ContainerJSONBase != nil && containerJSON.HostConfig != nil && networkName != containerJSON.HostConfig.NetworkMode.NetworkName() {
-				continue
-			}
-			if network.IPAddress != "" {
-				containerIP = network.IPAddress
-				break
-			}
-		}
-	}
-
-	return containerIP, nil
 }

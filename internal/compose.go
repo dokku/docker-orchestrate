@@ -143,10 +143,12 @@ type RollingUpdateInput struct {
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
 	Sleeper func(time.Duration)
-	// PreStopHostCommand is the command to run before stopping a container
+	// PreStopHostCommand is the command to run before stopping a container (on host)
 	PreStopHostCommand string
-	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	// PreStopHostCommandDetached indicates if the pre-stop host command should run detached
 	PreStopHostCommandDetached bool
+	// PreStopCommand is the command to run inside the container before stopping
+	PreStopCommand string
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -329,6 +331,16 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ScriptType:  "pre-stop",
 					Detached:    input.PreStopHostCommandDetached,
 				})
+				// Run pre-stop command inside container if specified
+				if input.PreStopCommand != "" {
+					_ = runContainerScript(ctx, RunContainerScriptInput{
+						Client:      input.Client,
+						ContainerID: newContainer.ID,
+						Script:      input.PreStopCommand,
+						ScriptPath:  "/tmp/pre-stop.sh",
+						ServiceName: input.ServiceName,
+					})
+				}
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
@@ -367,6 +379,16 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ScriptType:  "pre-stop",
 					Detached:    input.PreStopHostCommandDetached,
 				})
+				// Run pre-stop command inside container if specified
+				if input.PreStopCommand != "" {
+					_ = runContainerScript(ctx, RunContainerScriptInput{
+						Client:      input.Client,
+						ContainerID: oldContainer.ID,
+						Script:      input.PreStopCommand,
+						ScriptPath:  "/tmp/pre-stop.sh",
+						ServiceName: input.ServiceName,
+					})
+				}
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
 					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
@@ -429,6 +451,16 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				ScriptType:  "pre-stop",
 				Detached:    input.PreStopHostCommandDetached,
 			})
+			// Run pre-stop command inside container if specified
+			if input.PreStopCommand != "" {
+				_ = runContainerScript(ctx, RunContainerScriptInput{
+					Client:      input.Client,
+					ContainerID: containerID,
+					Script:      input.PreStopCommand,
+					ScriptPath:  "/tmp/pre-stop.sh",
+					ServiceName: input.ServiceName,
+				})
+			}
 			err := input.Client.ContainerTerminate(stopCtx, containerID)
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
@@ -609,10 +641,12 @@ type ScaleDownContainersInput struct {
 	ServiceName string
 	// SkipDatabases is whether to skip interacting with databases
 	SkipDatabases bool
-	// PreStopHostCommand is the command to run before stopping a container
+	// PreStopHostCommand is the command to run before stopping a container (on host)
 	PreStopHostCommand string
-	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	// PreStopHostCommandDetached indicates if the pre-stop host command should run detached
 	PreStopHostCommandDetached bool
+	// PreStopCommand is the command to run inside the container before stopping
+	PreStopCommand string
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -673,6 +707,16 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 			ScriptType:  "pre-stop",
 			Detached:    input.PreStopHostCommandDetached,
 		})
+		// Run pre-stop command inside container if specified
+		if input.PreStopCommand != "" {
+			_ = runContainerScript(ctx, RunContainerScriptInput{
+				Client:      input.Client,
+				ContainerID: container.ID,
+				Script:      input.PreStopCommand,
+				ScriptPath:  "/tmp/pre-stop.sh",
+				ServiceName: input.ServiceName,
+			})
+		}
 		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
@@ -724,10 +768,12 @@ type ScaleUpContainersInput struct {
 	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
-	// PreStopHostCommand is the command to run before stopping a container
+	// PreStopHostCommand is the command to run before stopping a container (on host)
 	PreStopHostCommand string
-	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	// PreStopHostCommandDetached indicates if the pre-stop host command should run detached
 	PreStopHostCommandDetached bool
+	// PreStopCommand is the command to run inside the container before stopping
+	PreStopCommand string
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -863,6 +909,16 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						ScriptType:  "pre-stop",
 						Detached:    input.PreStopHostCommandDetached,
 					})
+					// Run pre-stop command inside container if specified
+					if input.PreStopCommand != "" {
+						_ = runContainerScript(ctx, RunContainerScriptInput{
+							Client:      input.Client,
+							ContainerID: c.ID,
+							Script:      input.PreStopCommand,
+							ScriptPath:  "/tmp/pre-stop.sh",
+							ServiceName: input.ServiceName,
+						})
+					}
 					_ = input.Client.ContainerTerminate(ctx, c.ID)
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,

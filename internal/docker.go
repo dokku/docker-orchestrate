@@ -3,7 +3,9 @@ package internal
 import (
 	"context"
 	"fmt"
+	"io"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	dockerClient "github.com/docker/docker/client"
 )
@@ -11,6 +13,10 @@ import (
 // DockerClientInterface is an interface for the Docker client
 type DockerClientInterface interface {
 	Close() error
+	ContainerExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error)
+	ContainerExecStart(ctx context.Context, execID string, config container.ExecStartOptions) error
+	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
+	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
@@ -18,6 +24,7 @@ type DockerClientInterface interface {
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
 	ContainerTerminate(ctx context.Context, containerID string) error
+	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 }
 
 // DockerClient is a wrapper around the Docker client
@@ -85,4 +92,29 @@ func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID strin
 	}
 
 	return nil
+}
+
+// ContainerExecCreate creates an exec instance in a container
+func (d *DockerClient) ContainerExecCreate(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+	return d.cli.ContainerExecCreate(ctx, containerID, config)
+}
+
+// ContainerExecStart starts an exec instance
+func (d *DockerClient) ContainerExecStart(ctx context.Context, execID string, config container.ExecStartOptions) error {
+	return d.cli.ContainerExecStart(ctx, execID, config)
+}
+
+// ContainerExecAttach attaches to an exec instance
+func (d *DockerClient) ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+	return d.cli.ContainerExecAttach(ctx, execID, config)
+}
+
+// ContainerExecInspect inspects an exec instance
+func (d *DockerClient) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
+	return d.cli.ContainerExecInspect(ctx, execID)
+}
+
+// CopyToContainer copies content to a container
+func (d *DockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {
+	return d.cli.CopyToContainer(ctx, containerID, dstPath, content, options)
 }
