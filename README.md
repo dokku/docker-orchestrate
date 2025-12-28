@@ -89,7 +89,11 @@ The script healthcheck runs after the standard Docker healthcheck (if defined) s
 
 ### Stop Commands
 
-The tool also supports `x-pre-stop-host-command` and `x-post-stop-host-command` fields, which are executed before and after a container is terminated, respectively (e.g., during a rolling update or scale down).
+The tool supports several types of stop commands that are executed before and after a container is terminated (e.g., during a rolling update or scale down):
+
+- **`x-pre-stop-host-command`**: Executed on the host before stopping a container
+- **`x-pre-stop-command`**: Executed inside the container before stopping (synchronously via Docker SDK)
+- **`x-post-stop-host-command`**: Executed on the host after stopping a container
 
 ```yaml
 services:
@@ -98,9 +102,43 @@ services:
       update_config:
         x-pre-stop-host-command: |
           curl -f http://{{.ContainerIP}}:8080/shutdown
+        x-pre-stop-command: |
+          #!/bin/sh
+          echo "Stopping service gracefully..."
+          kill -TERM 1
         x-post-stop-host-command: |
           echo "Container {{.ContainerShortID}} has been stopped"
 ```
+
+#### Container Pre-Stop Commands
+
+The `x-pre-stop-command` field allows you to run scripts **inside the container** before it is stopped. This is useful for graceful shutdowns, cleanup tasks, or any operations that need to run within the container's environment.
+
+```yaml
+services:
+  app:
+    deploy:
+      update_config:
+        x-pre-stop-command: |
+          #!/bin/bash
+          # Graceful shutdown
+          pkill -TERM -P 1
+          sleep 2
+          # Cleanup
+          rm -f /tmp/app.lock
+```
+
+- Scripts are written to `/tmp/pre-stop.sh` inside the container
+- Scripts run synchronously - `docker-orchestrate` waits for completion before stopping the container
+- Interpreter selection:
+  - If the script has a shebang (e.g., `#!/usr/bin/env bash`), that interpreter is used
+  - Otherwise, the container's `Config.Shell` property is used
+  - Falls back to `/bin/sh` if neither is available
+- Shebang parsing:
+  - `#!/usr/bin/env bash` → `/bin/bash -c`
+  - `#!/bin/sh` → `/bin/sh -c`
+  - `#!/usr/bin/python3` → `/usr/bin/python3 -c`
+  - Other interpreters are supported based on the shebang
 
 #### Detached Execution
 
@@ -120,8 +158,6 @@ services:
           curl -X POST http://monitoring.example.com/notify
         x-post-stop-host-command-detached: true
 ```
-
-**Important Notes:**
 
 - Detached commands run in the background and do not block deployment
 - Detached commands continue running even if `docker-orchestrate` exits or is interrupted

@@ -3,11 +3,15 @@ package internal
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/docker/docker/api/types/container"
 )
 
 // ErrorWithOutput is an error with output
@@ -146,11 +150,12 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 type runScriptInput struct {
 	Client      DockerClientInterface
 	ContainerID string
+	Detached    bool
 	Executor    CommandExecutor
 	ServiceName string
 	Script      string
 	ScriptType  string
-	Detached    bool
+	Shebang     string
 }
 
 func runHostScript(ctx context.Context, input runScriptInput) error {
@@ -194,8 +199,11 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 	}
 
 	command := commandBuf.String()
+	if input.Shebang == "" {
+		input.Shebang = "#!/usr/bin/env bash"
+	}
 	if !strings.HasPrefix(command, "#!") {
-		command = "#!/usr/bin/env bash\n" + command
+		command = input.Shebang + "\n" + command
 	}
 
 	tempFile, err := os.CreateTemp("", input.ScriptType+"-*.script")
@@ -281,4 +289,248 @@ func getContainerIP(ctx context.Context, client DockerClientInterface, container
 	}
 
 	return containerIP, nil
+}
+
+// parseShebang parses a shebang line and returns the interpreter command
+// Examples:
+//   - "#!/usr/bin/env bash" -> ["/bin/bash", "-c"]
+//   - "#!/bin/sh" -> ["/bin/sh", "-c"]
+//   - "#!/usr/bin/python3" -> ["/usr/bin/python3", "-c"]
+//
+// Returns empty slice if no shebang is found
+func parseShebang(script string) []string {
+	lines := strings.Split(script, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	firstLine := strings.TrimSpace(lines[0])
+	if !strings.HasPrefix(firstLine, "#!") {
+		return nil
+	}
+
+	// Remove the "#!" prefix
+	interpreterLine := strings.TrimPrefix(firstLine, "#!")
+	interpreterLine = strings.TrimSpace(interpreterLine)
+
+	// Handle "/usr/bin/env bash" -> "/bin/bash"
+	if strings.HasPrefix(interpreterLine, "/usr/bin/env ") {
+		interpreter := strings.TrimPrefix(interpreterLine, "/usr/bin/env ")
+		// Map common interpreters to their standard paths
+		switch interpreter {
+		case "bash":
+			return []string{"/bin/bash", "-c"}
+		case "sh":
+			return []string{"/bin/sh", "-c"}
+		case "python", "python3":
+			return []string{"/usr/bin/env", interpreter, "-c"}
+		default:
+			// Try to find the interpreter in common locations
+			return []string{"/usr/bin/env", interpreter, "-c"}
+		}
+	}
+
+	// Direct path like "/bin/sh" or "/usr/bin/python3"
+	parts := strings.Fields(interpreterLine)
+	if len(parts) == 0 {
+		return nil
+	}
+
+	interpreter := parts[0]
+	// Add -c flag for shell-like interpreters
+	if strings.Contains(interpreter, "sh") || strings.Contains(interpreter, "bash") {
+		return []string{interpreter, "-c"}
+	}
+	// For other interpreters, try with -c
+	return []string{interpreter, "-c"}
+}
+
+// RunContainerScriptInput is the input for the runContainerScript function
+type RunContainerScriptInput struct {
+	// Client is the Docker client to use
+	Client DockerClientInterface
+	// ContainerID is the ID of the container
+	ContainerID string
+	// Script is the script content to execute
+	Script string
+	// ScriptPath is the path inside the container where the script will be written
+	ScriptPath string
+	// ServiceName is the name of the service
+	ServiceName string
+}
+
+// runContainerScript runs a script inside a container
+func runContainerScript(ctx context.Context, input RunContainerScriptInput) error {
+	if input.Script == "" {
+		return nil
+	}
+
+	if input.Client == nil {
+		return fmt.Errorf("client is required")
+	}
+
+	if input.ScriptPath == "" {
+		input.ScriptPath = "/tmp/pre-stop.sh"
+	}
+
+	// Inspect container to get Config.Shell
+	containerJSON, err := input.Client.ContainerInspect(ctx, input.ContainerID)
+	if err != nil {
+		return fmt.Errorf("error inspecting container: %v", err)
+	}
+
+	// Determine the interpreter
+	var cmd []string
+	shebang := parseShebang(input.Script)
+	if len(shebang) > 0 {
+		// Use the interpreter from shebang
+		cmd = shebang
+	} else if containerJSON.Config != nil && len(containerJSON.Config.Shell) > 0 {
+		// Use Config.Shell
+		cmd = append(containerJSON.Config.Shell, "-c")
+	} else {
+		// Fall back to sh
+		cmd = []string{"/bin/sh", "-c"}
+	}
+
+	// Remove shebang from script if present
+	scriptContent := input.Script
+	if strings.HasPrefix(strings.TrimSpace(scriptContent), "#!") {
+		lines := strings.Split(scriptContent, "\n")
+		if len(lines) > 1 {
+			scriptContent = strings.Join(lines[1:], "\n")
+		} else {
+			scriptContent = ""
+		}
+	}
+
+	// Use base64 encoding to safely write the script to the container
+	// This avoids issues with special characters, quotes, newlines, etc.
+	scriptBase64 := base64.StdEncoding.EncodeToString([]byte(scriptContent))
+	writeScriptCmd := fmt.Sprintf("echo %s | base64 -d > %s", scriptBase64, input.ScriptPath)
+
+	// Create exec instance to write the script
+	writeExecConfig := container.ExecOptions{
+		Cmd:          []string{"/bin/sh", "-c", writeScriptCmd},
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	writeExecID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, writeExecConfig)
+	if err != nil {
+		return fmt.Errorf("error creating exec instance to write script: %v", err)
+	}
+
+	// Execute the write command
+	var writeOutput bytes.Buffer
+	writeAttach, err := input.Client.ContainerExecAttach(ctx, writeExecID.ID, container.ExecAttachOptions{
+		Detach: false,
+		Tty:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("error attaching to exec instance: %v", err)
+	}
+	if writeAttach.Conn != nil {
+		defer writeAttach.Close()
+	}
+
+	// Start the exec
+	if err := input.Client.ContainerExecStart(ctx, writeExecID.ID, container.ExecStartOptions{
+		Detach: false,
+		Tty:    false,
+	}); err != nil {
+		return fmt.Errorf("error starting exec instance: %v", err)
+	}
+
+	// Read output (though there shouldn't be much for a write operation)
+	_, _ = io.Copy(&writeOutput, writeAttach.Reader)
+
+	// Make script executable
+	chmodCmd := []string{"/bin/sh", "-c", fmt.Sprintf("chmod +x %s", input.ScriptPath)}
+	chmodExecConfig := container.ExecOptions{
+		Cmd:          chmodCmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	chmodExecID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, chmodExecConfig)
+	if err != nil {
+		return fmt.Errorf("error creating exec instance to chmod script: %v", err)
+	}
+
+	var chmodOutput bytes.Buffer
+	chmodAttach, err := input.Client.ContainerExecAttach(ctx, chmodExecID.ID, container.ExecAttachOptions{
+		Detach: false,
+		Tty:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("error attaching to chmod exec instance: %v", err)
+	}
+	if chmodAttach.Conn != nil {
+		defer chmodAttach.Close()
+	}
+
+	if err := input.Client.ContainerExecStart(ctx, chmodExecID.ID, container.ExecStartOptions{
+		Detach: false,
+		Tty:    false,
+	}); err != nil {
+		return fmt.Errorf("error starting chmod exec instance: %v", err)
+	}
+
+	_, _ = io.Copy(&chmodOutput, chmodAttach.Reader)
+
+	// Execute the script using the determined interpreter
+	// The script path is passed as an argument to the interpreter
+	execCmd := append(cmd, input.ScriptPath)
+	execConfig := container.ExecOptions{
+		Cmd:          execCmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("error creating exec instance: %v", err)
+	}
+
+	var execOutput bytes.Buffer
+	execAttach, err := input.Client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{
+		Detach: false,
+		Tty:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("error attaching to exec instance: %v", err)
+	}
+	if execAttach.Conn != nil {
+		defer execAttach.Close()
+	}
+
+	if err := input.Client.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{
+		Detach: false,
+		Tty:    false,
+	}); err != nil {
+		return fmt.Errorf("error starting exec instance: %v", err)
+	}
+
+	// Read the output
+	_, _ = io.Copy(&execOutput, execAttach.Reader)
+
+	// Inspect the exec to get the exit code
+	execInspect, err := input.Client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return fmt.Errorf("error inspecting exec instance: %v", err)
+	}
+
+	if execInspect.ExitCode != 0 {
+		containerShortID := input.ContainerID
+		if len(containerShortID) > 12 {
+			containerShortID = containerShortID[:12]
+		}
+		return &ErrorWithOutput{
+			Err:    fmt.Errorf("container script failed for container %s: exit code %d", containerShortID, execInspect.ExitCode),
+			Output: strings.TrimSpace(execOutput.String()),
+		}
+	}
+
+	return nil
 }

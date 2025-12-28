@@ -108,6 +108,7 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 			Logger:                      input.Logger,
 			PostStopHostCommand:         "",
 			PostStopHostCommandDetached: false,
+			PreStopCommand:              "",
 			PreStopHostCommand:          "",
 			PreStopHostCommandDetached:  false,
 			ProjectName:                 input.ProjectName,
@@ -229,6 +230,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 
 	healthcheckHostCommand := ""
 	preStopHostCommand := ""
+	preStopCommand := ""
 	postStopHostCommand := ""
 	preStopHostCommandDetached := false
 	postStopHostCommandDetached := false
@@ -238,6 +240,9 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 		if cmd, ok := updateConfig.Extensions["x-pre-stop-host-command"].(string); ok {
 			preStopHostCommand = cmd
+		}
+		if cmd, ok := updateConfig.Extensions["x-pre-stop-command"].(string); ok {
+			preStopCommand = cmd
 		}
 		if cmd, ok := updateConfig.Extensions["x-post-stop-host-command"].(string); ok {
 			postStopHostCommand = cmd
@@ -372,6 +377,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			Parallelism:                 parallelism,
 			PostStopHostCommand:         postStopHostCommand,
 			PostStopHostCommandDetached: postStopHostCommandDetached,
+			PreStopCommand:              preStopCommand,
 			PreStopHostCommand:          preStopHostCommand,
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectDir:                  projectDir,

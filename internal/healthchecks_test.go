@@ -1,16 +1,33 @@
 package internal
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 )
+
+// mockConn is a minimal mock connection for testing
+type mockConn struct {
+	net.Conn
+}
+
+func (m *mockConn) Read(b []byte) (n int, err error)   { return 0, nil }
+func (m *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (m *mockConn) Close() error                       { return nil }
+func (m *mockConn) LocalAddr() net.Addr                { return nil }
+func (m *mockConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func TestErrorWithOutput(t *testing.T) {
 	err := &ErrorWithOutput{
@@ -634,6 +651,271 @@ func TestGetContainerIP(t *testing.T) {
 		}
 		if ip != "" {
 			t.Errorf("expected empty IP for network mismatch, got %s", ip)
+		}
+	})
+}
+
+func TestParseShebang(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected []string
+	}{
+		{
+			name:     "no shebang",
+			script:   "echo hello",
+			expected: nil,
+		},
+		{
+			name:     "bash shebang with env",
+			script:   "#!/usr/bin/env bash\necho hello",
+			expected: []string{"/bin/bash", "-c"},
+		},
+		{
+			name:     "sh shebang",
+			script:   "#!/bin/sh\necho hello",
+			expected: []string{"/bin/sh", "-c"},
+		},
+		{
+			name:     "python3 shebang",
+			script:   "#!/usr/bin/python3\nprint('hello')",
+			expected: []string{"/usr/bin/python3", "-c"},
+		},
+		{
+			name:     "direct bash path",
+			script:   "#!/bin/bash\necho hello",
+			expected: []string{"/bin/bash", "-c"},
+		},
+		{
+			name:     "env sh",
+			script:   "#!/usr/bin/env sh\necho hello",
+			expected: []string{"/bin/sh", "-c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseShebang(tt.script)
+			if tt.expected == nil {
+				if result != nil {
+					t.Errorf("expected nil, got %v", result)
+				}
+			} else {
+				if len(result) != len(tt.expected) {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+				} else {
+					for i := range result {
+						if result[i] != tt.expected[i] {
+							t.Errorf("expected %v, got %v", tt.expected, result)
+							break
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRunContainerScript(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty script", func(t *testing.T) {
+		mockClient := &mockDockerClient{}
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "",
+			ServiceName: "test-service",
+		}
+		err := runContainerScript(ctx, input)
+		if err != nil {
+			t.Errorf("expected nil error for empty script, got %v", err)
+		}
+	})
+
+	t.Run("missing client", func(t *testing.T) {
+		input := RunContainerScriptInput{
+			ContainerID: "test-container",
+			Script:      "echo hello",
+			ServiceName: "test-service",
+		}
+		err := runContainerScript(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "client is required") {
+			t.Errorf("expected 'client is required' error, got %v", err)
+		}
+	})
+
+	t.Run("script with shebang", func(t *testing.T) {
+		execCreateCalled := false
+		execStartCalled := false
+		execInspectCalled := false
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						Shell: []string{"/bin/sh"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				execCreateCalled = true
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				execStartCalled = true
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				// Return a minimal HijackedResponse with a reader that returns EOF immediately
+				// Use a mock connection that won't panic on close
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				execInspectCalled = true
+				return container.ExecInspect{
+					ExecID:      execID,
+					ContainerID: "test-container",
+					Running:     false,
+					ExitCode:    0,
+				}, nil
+			},
+		}
+
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "#!/usr/bin/env bash\necho hello",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "test-service",
+		}
+
+		err := runContainerScript(ctx, input)
+		if !execCreateCalled {
+			t.Error("expected ContainerExecCreate to be called")
+		}
+		if !execStartCalled {
+			t.Error("expected ContainerExecStart to be called")
+		}
+		if !execInspectCalled {
+			t.Error("expected ContainerExecInspect to be called")
+		}
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("script without shebang uses Config.Shell", func(t *testing.T) {
+		execCreateCalled := false
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						Shell: []string{"/bin/bash", "-i"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				execCreateCalled = true
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   nil,
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{
+					ExecID:      execID,
+					ContainerID: "test-container",
+					Running:     false,
+					ExitCode:    0,
+				}, nil
+			},
+		}
+
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "echo hello",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "test-service",
+		}
+
+		err := runContainerScript(ctx, input)
+		if !execCreateCalled {
+			t.Error("expected ContainerExecCreate to be called")
+		}
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("script without shebang falls back to sh", func(t *testing.T) {
+		execCreateCalled := false
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						// No Shell configured
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				execCreateCalled = true
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   nil,
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{
+					ExecID:      execID,
+					ContainerID: "test-container",
+					Running:     false,
+					ExitCode:    0,
+				}, nil
+			},
+		}
+
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "echo hello",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "test-service",
+		}
+
+		err := runContainerScript(ctx, input)
+		if !execCreateCalled {
+			t.Error("expected ContainerExecCreate to be called")
+		}
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
 		}
 	})
 }
