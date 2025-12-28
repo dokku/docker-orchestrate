@@ -99,18 +99,20 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 
 		input.Logger.LogHeader2(fmt.Sprintf("Removing service %s", serviceName))
 		err = scaleDownContainers(ctx, ScaleDownContainersInput{
-			Client:              input.Client,
-			ComposeFile:         input.ComposeFile,
-			CurrentContainers:   currentContainers,
-			CurrentReplicas:     len(currentContainers),
-			DesiredReplicas:     0,
-			Executor:            input.Executor,
-			Logger:              input.Logger,
-			PostStopHostCommand: "",
-			PreStopHostCommand:  "",
-			ProjectName:         input.ProjectName,
-			ServiceName:         serviceName,
-			SkipDatabases:       input.SkipDatabases,
+			Client:                      input.Client,
+			ComposeFile:                 input.ComposeFile,
+			CurrentContainers:           currentContainers,
+			CurrentReplicas:             len(currentContainers),
+			DesiredReplicas:             0,
+			Executor:                    input.Executor,
+			Logger:                      input.Logger,
+			PostStopHostCommand:         "",
+			PostStopHostCommandDetached: false,
+			PreStopHostCommand:          "",
+			PreStopHostCommandDetached:  false,
+			ProjectName:                 input.ProjectName,
+			ServiceName:                 serviceName,
+			SkipDatabases:               input.SkipDatabases,
 		})
 		if err != nil {
 			return err
@@ -228,6 +230,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	healthcheckHostCommand := ""
 	preStopHostCommand := ""
 	postStopHostCommand := ""
+	preStopHostCommandDetached := false
+	postStopHostCommandDetached := false
 	if updateConfig.Extensions != nil {
 		if cmd, ok := updateConfig.Extensions["x-healthcheck-host-command"].(string); ok {
 			healthcheckHostCommand = cmd
@@ -237,6 +241,16 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 		if cmd, ok := updateConfig.Extensions["x-post-stop-host-command"].(string); ok {
 			postStopHostCommand = cmd
+		}
+		if detached, err := parseDetachedFlag(updateConfig.Extensions, "x-pre-stop-host-command-detached"); err != nil {
+			return err
+		} else {
+			preStopHostCommandDetached = detached
+		}
+		if detached, err := parseDetachedFlag(updateConfig.Extensions, "x-post-stop-host-command-detached"); err != nil {
+			return err
+		} else {
+			postStopHostCommandDetached = detached
 		}
 	}
 
@@ -261,17 +275,19 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	// Scale down if needed (before rolling update)
 	if len(currentContainers) > replicas {
 		err := scaleDownContainers(ctx, ScaleDownContainersInput{
-			Client:              input.Client,
-			ComposeFile:         input.ComposeFile,
-			CurrentContainers:   currentContainers,
-			CurrentReplicas:     len(currentContainers),
-			DesiredReplicas:     replicas,
-			Executor:            executor,
-			Logger:              input.Logger,
-			PostStopHostCommand: postStopHostCommand,
-			PreStopHostCommand:  preStopHostCommand,
-			ProjectName:         input.ProjectName,
-			ServiceName:         input.ServiceName,
+			Client:                      input.Client,
+			ComposeFile:                 input.ComposeFile,
+			CurrentContainers:           currentContainers,
+			CurrentReplicas:             len(currentContainers),
+			DesiredReplicas:             replicas,
+			Executor:                    executor,
+			Logger:                      input.Logger,
+			PostStopHostCommand:         postStopHostCommand,
+			PostStopHostCommandDetached: postStopHostCommandDetached,
+			PreStopHostCommand:          preStopHostCommand,
+			PreStopHostCommandDetached:  preStopHostCommandDetached,
+			ProjectName:                 input.ProjectName,
+			ServiceName:                 input.ServiceName,
 		})
 		if err != nil {
 			return err
@@ -300,25 +316,27 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	var rollingUpdateOutput RollingUpdateOutput
 	if len(containersToUpdate) > 0 {
 		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
-			Client:              input.Client,
-			ComposeFile:         input.ComposeFile,
-			ContainersToUpdate:  containersToUpdate,
-			CurrentReplicas:     len(containersToUpdate),
-			Delay:               delay,
-			DesiredReplicas:     replicas,
-			Executor:            executor,
-			FailureAction:       updateConfig.FailureAction,
-			HealthcheckCommand:  healthcheckHostCommand,
-			Logger:              input.Logger,
-			MaxFailureRatio:     maxFailureRatio,
-			Monitor:             monitor,
-			Order:               order,
-			Parallelism:         parallelism,
-			PostStopHostCommand: postStopHostCommand,
-			PreStopHostCommand:  preStopHostCommand,
-			ProjectDir:          projectDir,
-			ProjectName:         input.ProjectName,
-			ServiceName:         input.ServiceName,
+			Client:                      input.Client,
+			ComposeFile:                 input.ComposeFile,
+			ContainersToUpdate:          containersToUpdate,
+			CurrentReplicas:             len(containersToUpdate),
+			Delay:                       delay,
+			DesiredReplicas:             replicas,
+			Executor:                    executor,
+			FailureAction:               updateConfig.FailureAction,
+			HealthcheckCommand:          healthcheckHostCommand,
+			Logger:                      input.Logger,
+			MaxFailureRatio:             maxFailureRatio,
+			Monitor:                     monitor,
+			Order:                       order,
+			Parallelism:                 parallelism,
+			PostStopHostCommand:         postStopHostCommand,
+			PostStopHostCommandDetached: postStopHostCommandDetached,
+			PreStopHostCommand:          preStopHostCommand,
+			PreStopHostCommandDetached:  preStopHostCommandDetached,
+			ProjectDir:                  projectDir,
+			ProjectName:                 input.ProjectName,
+			ServiceName:                 input.ServiceName,
 		})
 		if err != nil {
 			return fmt.Errorf("error rolling update containers: %v", err)
@@ -339,24 +357,26 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	// Scale up if needed (only after existing containers are replaced)
 	if len(updatedContainers) < replicas {
 		err := scaleUpContainers(ctx, ScaleUpContainersInput{
-			Client:              input.Client,
-			ComposeFile:         input.ComposeFile,
-			CurrentReplicas:     len(updatedContainers),
-			Delay:               delay,
-			DesiredReplicas:     replicas,
-			Executor:            executor,
-			ExistingContainers:  updatedContainers,
-			FailureAction:       string(updateConfig.FailureAction),
-			HealthcheckCommand:  healthcheckHostCommand,
-			Logger:              input.Logger,
-			MaxFailureRatio:     maxFailureRatio,
-			Monitor:             monitor,
-			Parallelism:         parallelism,
-			PostStopHostCommand: postStopHostCommand,
-			PreStopHostCommand:  preStopHostCommand,
-			ProjectDir:          projectDir,
-			ProjectName:         input.ProjectName,
-			ServiceName:         input.ServiceName,
+			Client:                      input.Client,
+			ComposeFile:                 input.ComposeFile,
+			CurrentReplicas:             len(updatedContainers),
+			Delay:                       delay,
+			DesiredReplicas:             replicas,
+			Executor:                    executor,
+			ExistingContainers:          updatedContainers,
+			FailureAction:               string(updateConfig.FailureAction),
+			HealthcheckCommand:          healthcheckHostCommand,
+			Logger:                      input.Logger,
+			MaxFailureRatio:             maxFailureRatio,
+			Monitor:                     monitor,
+			Parallelism:                 parallelism,
+			PostStopHostCommand:         postStopHostCommand,
+			PostStopHostCommandDetached: postStopHostCommandDetached,
+			PreStopHostCommand:          preStopHostCommand,
+			PreStopHostCommandDetached:  preStopHostCommandDetached,
+			ProjectDir:                  projectDir,
+			ProjectName:                 input.ProjectName,
+			ServiceName:                 input.ServiceName,
 		})
 		if err != nil {
 			return err
@@ -429,6 +449,34 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	}
 
 	return dependencyOrder, nil
+}
+
+// parseDetachedFlag parses and validates a detached flag from extensions
+// Returns true if the value is "true", false if empty or "false", and an error for invalid values
+func parseDetachedFlag(extensions map[string]interface{}, key string) (bool, error) {
+	val, ok := extensions[key]
+	if !ok {
+		return false, nil
+	}
+
+	strVal, ok := val.(string)
+	if !ok {
+		return false, fmt.Errorf("%s must be a string (got %T)", key, val)
+	}
+
+	if strVal == "" {
+		return false, nil
+	}
+
+	if strVal == "true" {
+		return true, nil
+	}
+
+	if strVal == "false" {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("%s must be 'true', 'false', or empty string (got %q)", key, strVal)
 }
 
 // ShouldSkipScaleDownServiceInput is the input for the shouldSkipScaleDownService function

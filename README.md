@@ -102,6 +102,33 @@ services:
           echo "Container {{.ContainerShortID}} has been stopped"
 ```
 
+#### Detached Execution
+
+By default, stop commands run synchronously and `docker-orchestrate` waits for them to complete before proceeding. You can configure commands to run in detached mode using `x-pre-stop-host-command-detached` and `x-post-stop-host-command-detached`. When set to `"true"`, the command runs asynchronously and will continue executing even if `docker-orchestrate` exits.
+
+```yaml
+services:
+  web:
+    deploy:
+      update_config:
+        x-pre-stop-host-command: |
+          # Long-running cleanup task
+          ./cleanup-script.sh {{.ContainerID}}
+        x-pre-stop-host-command-detached: "true"
+        x-post-stop-host-command: |
+          # Send notification asynchronously
+          curl -X POST http://monitoring.example.com/notify
+        x-post-stop-host-command-detached: "true"
+```
+
+**Important Notes:**
+
+- Detached commands run in the background and do not block deployment
+- Detached commands continue running even if `docker-orchestrate` exits or is interrupted
+- Only the values `"true"`, `"false"`, or empty string are allowed (empty string is treated as `"false"`)
+- Invalid values will result in an error
+- The default behavior (when not specified) is `"false"` (synchronous execution)
+
 ### Script Templating
 
 Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-host-command` are treated as Go templates and have access to:

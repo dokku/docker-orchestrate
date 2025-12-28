@@ -378,6 +378,155 @@ func TestRunHostScript(t *testing.T) {
 			t.Errorf("expected inspect error, got %v", err)
 		}
 	})
+
+	t.Run("detached execution", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		executorCalled := make(chan bool, 1)
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executorCalled <- true
+			// Simulate a long-running command
+			time.Sleep(100 * time.Millisecond)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			ServiceName: "test-service",
+			Script:      "echo hello",
+			ScriptType:  "test-script",
+			Detached:    true,
+		}
+
+		start := time.Now()
+		err := runHostScript(ctx, input)
+		duration := time.Since(start)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Detached execution should return immediately (much faster than the command duration)
+		if duration > 50*time.Millisecond {
+			t.Errorf("detached execution should return immediately, took %v", duration)
+		}
+
+		// Wait a bit to ensure the goroutine has a chance to execute
+		time.Sleep(150 * time.Millisecond)
+
+		// Check that executor was called
+		select {
+		case <-executorCalled:
+			// Good, executor was called
+		default:
+			t.Error("expected executor to be called in detached mode")
+		}
+	})
+
+	t.Run("detached execution with background context", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		executorCtx := make(chan context.Context, 1)
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executorCtx <- ctx
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		// Create a cancellable context
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			ServiceName: "test-service",
+			Script:      "echo hello",
+			ScriptType:  "test-script",
+			Detached:    true,
+		}
+
+		err := runHostScript(cancelCtx, input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		// Cancel the context
+		cancel()
+
+		// Wait a bit to ensure the goroutine has a chance to execute
+		time.Sleep(50 * time.Millisecond)
+
+		// Check that executor was called with background context (not the cancelled one)
+		select {
+		case ctx := <-executorCtx:
+			// The context should be background context, not the cancelled one
+			if ctx == cancelCtx {
+				t.Error("expected executor to use background context, not the cancelled context")
+			}
+			// Background context should not be cancelled
+			if ctx.Err() != nil {
+				t.Errorf("expected background context to not be cancelled, got: %v", ctx.Err())
+			}
+		default:
+			t.Error("expected executor to be called in detached mode")
+		}
+	})
+
+	t.Run("synchronous execution default behavior", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		executorCalled := false
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executorCalled = true
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			ServiceName: "test-service",
+			Script:      "echo hello",
+			ScriptType:  "test-script",
+			Detached:    false, // Explicitly false
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		if !executorCalled {
+			t.Error("expected executor to be called")
+		}
+	})
 }
 
 func TestGetContainerIP(t *testing.T) {
