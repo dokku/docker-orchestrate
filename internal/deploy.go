@@ -452,31 +452,19 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 }
 
 // parseDetachedFlag parses and validates a detached flag from extensions
-// Returns true if the value is "true", false if empty or "false", and an error for invalid values
+// Returns true if the value is boolean true, false if boolean false or not set, and an error for invalid values
 func parseDetachedFlag(extensions map[string]interface{}, key string) (bool, error) {
 	val, ok := extensions[key]
 	if !ok {
 		return false, nil
 	}
 
-	strVal, ok := val.(string)
+	boolVal, ok := val.(bool)
 	if !ok {
-		return false, fmt.Errorf("%s must be a string (got %T)", key, val)
+		return false, fmt.Errorf("%s must be a boolean (got %T)", key, val)
 	}
 
-	if strVal == "" {
-		return false, nil
-	}
-
-	if strVal == "true" {
-		return true, nil
-	}
-
-	if strVal == "false" {
-		return false, nil
-	}
-
-	return false, fmt.Errorf("%s must be 'true', 'false', or empty string (got %q)", key, strVal)
+	return boolVal, nil
 }
 
 // ShouldSkipScaleDownServiceInput is the input for the shouldSkipScaleDownService function
