@@ -140,6 +140,11 @@ services:
   - `#!/usr/bin/python3` → `/usr/bin/python3 -c`
   - Other interpreters are supported based on the shebang
 
+**Note**: The container must have the following binaries available:
+
+- `/bin/sh` (or the shell specified in `Config.Shell`) - required for script execution
+- The interpreter specified in the shebang (if present) - must be available in the container's PATH
+
 #### Detached Execution
 
 By default, stop commands run synchronously and `docker-orchestrate` waits for them to complete before proceeding. You can configure commands to run in detached mode using `x-pre-stop-host-command-detached` and `x-post-stop-host-command-detached`. When set to `true`, the command runs asynchronously and will continue executing even if `docker-orchestrate` exits.

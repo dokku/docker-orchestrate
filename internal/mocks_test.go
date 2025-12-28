@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"io"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -18,6 +19,7 @@ type mockDockerClient struct {
 	containerExecStart   func(ctx context.Context, execID string, config container.ExecStartOptions) error
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
+	copyToContainer      func(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 	renamedContainers    map[string]string
 }
 
@@ -90,4 +92,11 @@ func (m *mockDockerClient) ContainerExecInspect(ctx context.Context, execID stri
 		return m.containerExecInspect(ctx, execID)
 	}
 	return container.ExecInspect{}, nil
+}
+
+func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {
+	if m.copyToContainer != nil {
+		return m.copyToContainer(ctx, containerID, dstPath, content, options)
+	}
+	return nil
 }

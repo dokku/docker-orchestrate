@@ -1,12 +1,13 @@
 package internal
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -293,80 +294,43 @@ func runContainerScript(ctx context.Context, input RunContainerScriptInput) erro
 		}
 	}
 
-	// Use base64 encoding to safely write the script to the container
-	// This avoids issues with special characters, quotes, newlines, etc.
-	scriptBase64 := base64.StdEncoding.EncodeToString([]byte(scriptContent))
-	writeScriptCmd := fmt.Sprintf("echo %s | base64 -d > %s", scriptBase64, input.ScriptPath)
+	// Create a tar archive containing the script
+	var tarBuf bytes.Buffer
+	tarWriter := tar.NewWriter(&tarBuf)
+	defer tarWriter.Close()
 
-	// Create exec instance to write the script
-	writeExecConfig := container.ExecOptions{
-		Cmd:          []string{"/bin/sh", "-c", writeScriptCmd},
-		AttachStdout: true,
-		AttachStderr: true,
+	// Get the filename from the script path
+	scriptFileName := filepath.Base(input.ScriptPath)
+
+	// Create tar header with executable permissions
+	header := &tar.Header{
+		Name: scriptFileName,
+		Mode: 0755,
+		Size: int64(len(scriptContent)),
 	}
 
-	writeExecID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, writeExecConfig)
-	if err != nil {
-		return fmt.Errorf("error creating exec instance to write script: %v", err)
+	if err := tarWriter.WriteHeader(header); err != nil {
+		return fmt.Errorf("error writing tar header: %v", err)
 	}
 
-	// Execute the write command
-	var writeOutput bytes.Buffer
-	writeAttach, err := input.Client.ContainerExecAttach(ctx, writeExecID.ID, container.ExecAttachOptions{
-		Detach: false,
-		Tty:    false,
-	})
-	if err != nil {
-		return fmt.Errorf("error attaching to exec instance: %v", err)
-	}
-	if writeAttach.Conn != nil {
-		defer writeAttach.Close()
+	if _, err := tarWriter.Write([]byte(scriptContent)); err != nil {
+		return fmt.Errorf("error writing script content to tar: %v", err)
 	}
 
-	// Start the exec
-	if err := input.Client.ContainerExecStart(ctx, writeExecID.ID, container.ExecStartOptions{
-		Detach: false,
-		Tty:    false,
-	}); err != nil {
-		return fmt.Errorf("error starting exec instance: %v", err)
+	if err := tarWriter.Close(); err != nil {
+		return fmt.Errorf("error closing tar writer: %v", err)
 	}
 
-	// Read output (though there shouldn't be much for a write operation)
-	_, _ = io.Copy(&writeOutput, writeAttach.Reader)
-
-	// Make script executable
-	chmodCmd := []string{"/bin/sh", "-c", fmt.Sprintf("chmod +x %s", input.ScriptPath)}
-	chmodExecConfig := container.ExecOptions{
-		Cmd:          chmodCmd,
-		AttachStdout: true,
-		AttachStderr: true,
+	// Get the directory path where the script will be placed
+	scriptDir := filepath.Dir(input.ScriptPath)
+	if scriptDir == "" || scriptDir == "." {
+		scriptDir = "/"
 	}
 
-	chmodExecID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, chmodExecConfig)
-	if err != nil {
-		return fmt.Errorf("error creating exec instance to chmod script: %v", err)
+	// Copy the tar archive to the container
+	if err := input.Client.CopyToContainer(ctx, input.ContainerID, scriptDir, &tarBuf, container.CopyToContainerOptions{}); err != nil {
+		return fmt.Errorf("error copying script to container: %v", err)
 	}
-
-	var chmodOutput bytes.Buffer
-	chmodAttach, err := input.Client.ContainerExecAttach(ctx, chmodExecID.ID, container.ExecAttachOptions{
-		Detach: false,
-		Tty:    false,
-	})
-	if err != nil {
-		return fmt.Errorf("error attaching to chmod exec instance: %v", err)
-	}
-	if chmodAttach.Conn != nil {
-		defer chmodAttach.Close()
-	}
-
-	if err := input.Client.ContainerExecStart(ctx, chmodExecID.ID, container.ExecStartOptions{
-		Detach: false,
-		Tty:    false,
-	}); err != nil {
-		return fmt.Errorf("error starting chmod exec instance: %v", err)
-	}
-
-	_, _ = io.Copy(&chmodOutput, chmodAttach.Reader)
 
 	// Execute the script using the determined interpreter
 	// The script path is passed as an argument to the interpreter

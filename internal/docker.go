@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -23,6 +24,7 @@ type DockerClientInterface interface {
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
 	ContainerTerminate(ctx context.Context, containerID string) error
+	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 }
 
 // DockerClient is a wrapper around the Docker client
@@ -110,4 +112,9 @@ func (d *DockerClient) ContainerExecAttach(ctx context.Context, execID string, c
 // ContainerExecInspect inspects an exec instance
 func (d *DockerClient) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
 	return d.cli.ContainerExecInspect(ctx, execID)
+}
+
+// CopyToContainer copies content to a container
+func (d *DockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {
+	return d.cli.CopyToContainer(ctx, containerID, dstPath, content, options)
 }
