@@ -48,9 +48,7 @@ func ComposeFile() (string, error) {
 
 // ComposeProject reads the compose file specified by the filename
 // and returns the compose types.Project
-func ComposeProject(projectName string, filename string, profiles []string) (*types.Project, error) {
-	ctx := context.Background()
-
+func ComposeProject(ctx context.Context, projectName string, filename string, profiles []string) (*types.Project, error) {
 	opts := []cli.ProjectOptionsFn{
 		cli.WithOsEnv,
 		cli.WithDotEnv,
@@ -84,12 +82,10 @@ type ComposeContainersInput struct {
 }
 
 // composeContainers returns detailed information about containers
-func composeContainers(input ComposeContainersInput) ([]container.Summary, error) {
+func composeContainers(ctx context.Context, input ComposeContainersInput) ([]container.Summary, error) {
 	if input.Client == nil {
 		return nil, fmt.Errorf("client is required")
 	}
-
-	ctx := context.Background()
 
 	// Build filters for container labels
 	filterArgs := filters.NewArgs()
@@ -216,7 +212,7 @@ func rollingUpdateContainers(ctx context.Context, input RollingUpdateInput) (Rol
 // rollingUpdateBatchStartFirst starts the new containers first
 func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput, batch []container.Summary, output *RollingUpdateOutput) error {
 	// Get currently running containers to determine current scale
-	currentContainers, err := composeContainers(ComposeContainersInput{
+	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -248,7 +244,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 	}
 
 	// Get all containers to find the new ones
-	allContainers, err := composeContainers(ComposeContainersInput{
+	allContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -454,7 +450,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	// Current scale after stopping containers is (total - stopped)
 	// We want to scale back up to target replicas (or current replicas if we are in middle of update)
 	// Actually, we should scale up to whatever the count was before we stopped these
-	currentContainers, err := composeContainers(ComposeContainersInput{
+	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -485,7 +481,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	}
 
 	// Get all containers to find the new ones
-	allContainers, err := composeContainers(ComposeContainersInput{
+	allContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -767,7 +763,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	}
 
 	// Get all created containers (including existing running ones)
-	allContainers, err := composeContainers(ComposeContainersInput{
+	allContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,

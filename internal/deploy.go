@@ -65,7 +65,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 
 func RemoveMissingServices(ctx context.Context, input DeployProjectInput, orderedServices []string) error {
 	// Query all containers with the project label
-	allContainers, err := composeContainers(ComposeContainersInput{
+	allContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 	})
@@ -87,7 +87,7 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 	}
 
 	for serviceName := range servicesToRemove {
-		currentContainers, err := composeContainers(ComposeContainersInput{
+		currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 			Client:      input.Client,
 			ProjectName: input.ProjectName,
 			ServiceName: serviceName,
@@ -262,7 +262,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// Get current running containers
-	currentContainers, err := composeContainers(ComposeContainersInput{
+	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -295,7 +295,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// refresh the current containers
-	containersToUpdate, err := composeContainers(ComposeContainersInput{
+	containersToUpdate, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -344,7 +344,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// Get updated container count after rolling update
-	updatedContainers, err := composeContainers(ComposeContainersInput{
+	updatedContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
@@ -384,7 +384,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// Get final container count
-	finalContainers, err := composeContainers(ComposeContainersInput{
+	finalContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
 		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,

@@ -122,7 +122,8 @@ func (c *DeployCommand) Run(args []string) int {
 		c.projectName = filepath.Base(filepath.Dir(c.file))
 	}
 
-	project, err := internal.ComposeProject(c.projectName, c.file, c.profiles)
+	ctx := context.Background()
+	project, err := internal.ComposeProject(ctx, c.projectName, c.file, c.profiles)
 	if err != nil {
 		c.Ui.Error(err.Error())
 		return 1
@@ -141,7 +142,6 @@ func (c *DeployCommand) Run(args []string) int {
 	}
 
 	serviceName := arguments["service-name"].StringValue()
-	ctx := context.Background()
 	if serviceName == "" {
 		if c.replicas > 0 {
 			c.Ui.Error("--replicas flag requires a service name argument")
