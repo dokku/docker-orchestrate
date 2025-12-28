@@ -72,23 +72,27 @@ build/darwin/$(NAME)-amd64:
 	mkdir -p build/darwin
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
 										-o build/darwin/$(NAME)-amd64
 
 build/darwin/$(NAME)-arm64:
 	mkdir -p build/darwin
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
 										-o build/darwin/$(NAME)-arm64
 build/linux/$(NAME)-amd64:
 	mkdir -p build/linux
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
 										-o build/linux/$(NAME)-amd64
 
 build/linux/$(NAME)-arm64:
 	mkdir -p build/linux
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
 										-o build/linux/$(NAME)-arm64
 
 build/deb/$(NAME)_$(VERSION)_amd64.deb: build/linux/$(NAME)-amd64
