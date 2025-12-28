@@ -879,3 +879,95 @@ func TestServiceReplicas(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDetachedFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		extensions  map[string]interface{}
+		key         string
+		expected    bool
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "true value",
+			extensions:  map[string]interface{}{"x-test-detached": "true"},
+			key:         "x-test-detached",
+			expected:    true,
+			expectError: false,
+		},
+		{
+			name:        "false value",
+			extensions:  map[string]interface{}{"x-test-detached": "false"},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: false,
+		},
+		{
+			name:        "empty string",
+			extensions:  map[string]interface{}{"x-test-detached": ""},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: false,
+		},
+		{
+			name:        "missing key",
+			extensions:  map[string]interface{}{},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: false,
+		},
+		{
+			name:        "invalid value",
+			extensions:  map[string]interface{}{"x-test-detached": "yes"},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: true,
+			errorMsg:    "must be 'true', 'false', or empty string",
+		},
+		{
+			name:        "invalid value 1",
+			extensions:  map[string]interface{}{"x-test-detached": "1"},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: true,
+			errorMsg:    "must be 'true', 'false', or empty string",
+		},
+		{
+			name:        "non-string type",
+			extensions:  map[string]interface{}{"x-test-detached": true},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: true,
+			errorMsg:    "must be a string",
+		},
+		{
+			name:        "case sensitive true",
+			extensions:  map[string]interface{}{"x-test-detached": "True"},
+			key:         "x-test-detached",
+			expected:    false,
+			expectError: true,
+			errorMsg:    "must be 'true', 'false', or empty string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseDetachedFlag(tt.extensions, tt.key)
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+				} else if tt.errorMsg != "" && !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error to contain %q, got %q", tt.errorMsg, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if result != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+				}
+			}
+		})
+	}
+}

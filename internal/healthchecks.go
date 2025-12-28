@@ -150,6 +150,7 @@ type runScriptInput struct {
 	ServiceName string
 	Script      string
 	ScriptType  string
+	Detached    bool
 }
 
 func runHostScript(ctx context.Context, input runScriptInput) error {
@@ -201,19 +202,46 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 	if err != nil {
 		return fmt.Errorf("error creating temporary %s script: %v", input.ScriptType, err)
 	}
-	defer os.Remove(tempFile.Name())
+	tempFileName := tempFile.Name()
 
 	if _, err := tempFile.WriteString(command); err != nil {
+		os.Remove(tempFileName)
 		return fmt.Errorf("error writing %s command to temporary file: %v", input.ScriptType, err)
 	}
 	if err := tempFile.Close(); err != nil {
+		os.Remove(tempFileName)
 		return fmt.Errorf("error closing temporary %s file: %v", input.ScriptType, err)
 	}
 
-	if err := os.Chmod(tempFile.Name(), 0755); err != nil {
+	if err := os.Chmod(tempFileName, 0755); err != nil {
+		os.Remove(tempFileName)
 		return fmt.Errorf("error making temporary %s script executable: %v", input.ScriptType, err)
 	}
 
+	// If detached, run the command asynchronously and return immediately
+	if input.Detached {
+		go func() {
+			// Use background context so the command continues even if the original context is cancelled
+			bgCtx := context.Background()
+			var output bytes.Buffer
+			_, err := input.Executor(bgCtx, ExecCommandInput{
+				Command:          tempFileName,
+				StdoutWriter:     &output,
+				StderrWriter:     &output,
+				WorkingDirectory: os.TempDir(),
+			})
+			// In detached mode, we don't report errors - the command runs independently
+			_ = err
+			// Clean up the temp file after the command completes
+			os.Remove(tempFileName)
+		}()
+		return nil
+	}
+
+	// Synchronous execution (default behavior) - clean up temp file when done
+	defer os.Remove(tempFileName)
+
+	// Synchronous execution (default behavior)
 	var output bytes.Buffer
 	_, err = input.Executor(ctx, ExecCommandInput{
 		Command:          tempFile.Name(),

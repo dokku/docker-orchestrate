@@ -149,8 +149,12 @@ type RollingUpdateInput struct {
 	Sleeper func(time.Duration)
 	// PreStopHostCommand is the command to run before stopping a container
 	PreStopHostCommand string
+	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	PreStopHostCommandDetached bool
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
+	// PostStopHostCommandDetached indicates if the post-stop command should run detached
+	PostStopHostCommandDetached bool
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -327,6 +331,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ServiceName: input.ServiceName,
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
+					Detached:    input.PreStopHostCommandDetached,
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
 				_ = runHostScript(ctx, runScriptInput{
@@ -336,6 +341,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ServiceName: input.ServiceName,
 					Script:      input.PostStopHostCommand,
 					ScriptType:  "post-stop",
+					Detached:    input.PostStopHostCommandDetached,
 				})
 
 				// We don't return error here because we want to continue with others in batch
@@ -363,6 +369,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ServiceName: input.ServiceName,
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
+					Detached:    input.PreStopHostCommandDetached,
 				})
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
 					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
@@ -374,6 +381,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 					ServiceName: input.ServiceName,
 					Script:      input.PostStopHostCommand,
 					ScriptType:  "post-stop",
+					Detached:    input.PostStopHostCommandDetached,
 				})
 			} else {
 				input.Logger.Info(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
@@ -423,6 +431,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				ServiceName: input.ServiceName,
 				Script:      input.PreStopHostCommand,
 				ScriptType:  "pre-stop",
+				Detached:    input.PreStopHostCommandDetached,
 			})
 			err := input.Client.ContainerTerminate(stopCtx, containerID)
 			_ = runHostScript(ctx, runScriptInput{
@@ -432,6 +441,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				ServiceName: input.ServiceName,
 				Script:      input.PostStopHostCommand,
 				ScriptType:  "post-stop",
+				Detached:    input.PostStopHostCommandDetached,
 			})
 			return err
 		})
@@ -605,8 +615,12 @@ type ScaleDownContainersInput struct {
 	SkipDatabases bool
 	// PreStopHostCommand is the command to run before stopping a container
 	PreStopHostCommand string
+	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	PreStopHostCommandDetached bool
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
+	// PostStopHostCommandDetached indicates if the post-stop command should run detached
+	PostStopHostCommandDetached bool
 }
 
 // scaleDownContainers scales down containers by stopping and removing excess ones
@@ -661,6 +675,7 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 			ServiceName: input.ServiceName,
 			Script:      input.PreStopHostCommand,
 			ScriptType:  "pre-stop",
+			Detached:    input.PreStopHostCommandDetached,
 		})
 		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
@@ -672,6 +687,7 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 			ServiceName: input.ServiceName,
 			Script:      input.PostStopHostCommand,
 			ScriptType:  "post-stop",
+			Detached:    input.PostStopHostCommandDetached,
 		})
 	}
 
@@ -714,8 +730,12 @@ type ScaleUpContainersInput struct {
 	ServiceName string
 	// PreStopHostCommand is the command to run before stopping a container
 	PreStopHostCommand string
+	// PreStopHostCommandDetached indicates if the pre-stop command should run detached
+	PreStopHostCommandDetached bool
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
+	// PostStopHostCommandDetached indicates if the post-stop command should run detached
+	PostStopHostCommandDetached bool
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -845,6 +865,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						ServiceName: input.ServiceName,
 						Script:      input.PreStopHostCommand,
 						ScriptType:  "pre-stop",
+						Detached:    input.PreStopHostCommandDetached,
 					})
 					_ = input.Client.ContainerTerminate(ctx, c.ID)
 					_ = runHostScript(ctx, runScriptInput{
@@ -854,6 +875,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						ServiceName: input.ServiceName,
 						Script:      input.PostStopHostCommand,
 						ScriptType:  "post-stop",
+						Detached:    input.PostStopHostCommandDetached,
 					})
 				}
 			}(c)
