@@ -282,12 +282,8 @@ func TestIsDatabaseService(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			buf.Reset()
-			service := &types.ServiceConfig{
-				Name:  "test-service",
-				Image: tt.image,
-			}
 
-			result := isDatabaseService(service, logger)
+			result := isDatabaseService(tt.image, logger)
 
 			if result != tt.expectedResult {
 				t.Errorf("isDatabaseService() = %v, want %v for image %s", result, tt.expectedResult, tt.image)

@@ -1,0 +1,3 @@
+FROM scratch
+COPY ./build/linux/docker-orchestrate /docker-orchestrate
+ENTRYPOINT ["/docker-orchestrate"]
