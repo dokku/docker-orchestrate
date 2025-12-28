@@ -1,13 +1,211 @@
-VERSION ?= 0.2.0
+NAME = docker-orchestrate
+EMAIL = docker-orchestrate@josediazgonzalez.com
+MAINTAINER = dokku
+MAINTAINER_NAME = Jose Diaz-Gonzalez
+REPOSITORY = docker-orchestrate
+HARDWARE = $(shell uname -m)
+SYSTEM_NAME  = $(shell uname -s | tr '[:upper:]' '[:lower:]')
+BASE_VERSION ?= 0.1.0
+IMAGE_NAME ?= $(MAINTAINER)/$(REPOSITORY)
+PACKAGECLOUD_REPOSITORY ?= dokku/dokku-betafish
 
-.PHONY: build install test coverage
+ifeq ($(CI_BRANCH),release)
+	VERSION ?= $(BASE_VERSION)
+	DOCKER_IMAGE_VERSION = $(VERSION)
+else
+	VERSION = $(shell echo "${BASE_VERSION}")build+$(shell git rev-parse --short HEAD)
+	DOCKER_IMAGE_VERSION = $(shell echo "${BASE_VERSION}")build-$(shell git rev-parse --short HEAD)
+endif
 
-build:
-	go build -o docker-orchestrate -ldflags "-X main.Version=$(VERSION) -X commands.Version=$(VERSION)"
+version:
+	@echo "$(CI_BRANCH)"
+	@echo "$(VERSION)"
 
-install: build
+define PACKAGE_DESCRIPTION
+Deploys Docker Compose services with support for rolling updates, custom healthchecks, and container naming conventions.
+endef
+
+export PACKAGE_DESCRIPTION
+
+LIST = build release release-packagecloud validate
+targets = $(addsuffix -in-docker, $(LIST))
+
+.env.docker:
+	@rm -f .env.docker
+	@touch .env.docker
+	@echo "CI_BRANCH=$(CI_BRANCH)" >> .env.docker
+	@echo "GITHUB_ACCESS_TOKEN=$(GITHUB_ACCESS_TOKEN)" >> .env.docker
+	@echo "IMAGE_NAME=$(IMAGE_NAME)" >> .env.docker
+	@echo "PACKAGECLOUD_REPOSITORY=$(PACKAGECLOUD_REPOSITORY)" >> .env.docker
+	@echo "PACKAGECLOUD_TOKEN=$(PACKAGECLOUD_TOKEN)" >> .env.docker
+	@echo "VERSION=$(VERSION)" >> .env.docker
+
+install:
+	@$(MAKE) build/$(shell uname -s | tr A-Z a-z)/$(NAME)-arm64
 	mkdir -p ~/.docker/cli-plugins
-	cp docker-orchestrate ~/.docker/cli-plugins/docker-orchestrate
+	cp build/$(shell uname -s | tr A-Z a-z)/$(NAME)-arm64 ~/.docker/cli-plugins/$(NAME)
+
+build: prebuild
+	@$(MAKE) build/darwin/$(NAME)-amd64
+	@$(MAKE) build/darwin/$(NAME)-arm64
+	@$(MAKE) build/linux/$(NAME)-amd64
+	@$(MAKE) build/linux/$(NAME)-arm64
+	@$(MAKE) build/deb/$(NAME)_$(VERSION)_amd64.deb
+	@$(MAKE) build/deb/$(NAME)_$(VERSION)_arm64.deb
+
+build-docker-image:
+	docker build --rm -q -f Dockerfile -t $(IMAGE_NAME):build .
+
+$(targets): %-in-docker: .env.docker
+	docker run \
+		--env-file .env.docker \
+		--pid host \
+		--privileged \
+		--rm \
+		--volume /var/lib/docker:/var/lib/docker \
+		--volume /var/run/docker.sock:/var/run/docker.sock:ro \
+		--volume ${PWD}:/src/github.com/$(MAINTAINER)/$(REPOSITORY) \
+		--workdir /src/github.com/$(MAINTAINER)/$(REPOSITORY) \
+		$(IMAGE_NAME):build make -e $(@:-in-docker=)
+
+build/darwin/$(NAME)-amd64:
+	mkdir -p build/darwin
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/darwin/$(NAME)-amd64
+
+build/darwin/$(NAME)-arm64:
+	mkdir -p build/darwin
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/darwin/$(NAME)-arm64
+build/linux/$(NAME)-amd64:
+	mkdir -p build/linux
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/linux/$(NAME)-amd64
+
+build/linux/$(NAME)-arm64:
+	mkdir -p build/linux
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/linux/$(NAME)-arm64
+
+build/deb/$(NAME)_$(VERSION)_amd64.deb: build/linux/$(NAME)-amd64
+	export SOURCE_DATE_EPOCH=$(shell git log -1 --format=%ct) \
+		&& mkdir -p build/deb \
+		&& fpm \
+		--architecture amd64 \
+		--category utils \
+		--depends net-tools \
+		--depends util-linux \
+		--description "$$PACKAGE_DESCRIPTION" \
+		--input-type dir \
+		--license 'MIT License' \
+		--maintainer "$(MAINTAINER_NAME) <$(EMAIL)>" \
+		--name $(NAME) \
+		--output-type deb \
+		--package build/deb/$(NAME)_$(VERSION)_amd64.deb \
+		--url "https://github.com/$(MAINTAINER)/$(REPOSITORY)" \
+		--vendor "" \
+		--version $(VERSION) \
+		--verbose \
+		build/linux/$(NAME)-amd64=/usr/bin/$(NAME) \
+		LICENSE=/usr/share/doc/$(NAME)/copyright
+
+build/deb/$(NAME)_$(VERSION)_arm64.deb: build/linux/$(NAME)-arm64
+	export SOURCE_DATE_EPOCH=$(shell git log -1 --format=%ct) \
+		&& mkdir -p build/deb \
+		&& fpm \
+		--architecture arm64 \
+		--category utils \
+		--depends net-tools \
+		--depends util-linux \
+		--description "$$PACKAGE_DESCRIPTION" \
+		--input-type dir \
+		--license 'MIT License' \
+		--maintainer "$(MAINTAINER_NAME) <$(EMAIL)>" \
+		--name $(NAME) \
+		--output-type deb \
+		--package build/deb/$(NAME)_$(VERSION)_arm64.deb \
+		--url "https://github.com/$(MAINTAINER)/$(REPOSITORY)" \
+		--vendor "" \
+		--version $(VERSION) \
+		--verbose \
+		build/linux/$(NAME)-arm64=/usr/bin/$(NAME) \
+		LICENSE=/usr/share/doc/$(NAME)/copyright
+
+clean:
+	rm -rf build release validation
+
+ci-report:
+	docker version
+	rm -f ~/.gitconfig
+
+docker-image:
+	docker build --rm -q -f Dockerfile.hub -t $(IMAGE_NAME):$(DOCKER_IMAGE_VERSION) .
+	docker tag $(IMAGE_NAME):$(DOCKER_IMAGE_VERSION) $(IMAGE_NAME):hub
+
+bin/gh-release:
+	mkdir -p bin
+	curl -o bin/gh-release.tgz -sL https://github.com/progrium/gh-release/releases/download/v2.3.3/gh-release_2.3.3_$(SYSTEM_NAME)_$(HARDWARE).tgz
+	tar xf bin/gh-release.tgz -C bin
+	chmod +x bin/gh-release
+
+bin/gh-release-body:
+	mkdir -p bin
+	curl -o bin/gh-release-body "https://raw.githubusercontent.com/dokku/gh-release-body/master/gh-release-body"
+	chmod +x bin/gh-release-body
+
+release: build bin/gh-release bin/gh-release-body
+	rm -rf release && mkdir release
+	tar -zcf release/$(NAME)_$(VERSION)_linux_amd64.tgz -C build/linux $(NAME)-amd64
+	tar -zcf release/$(NAME)_$(VERSION)_linux_arm64.tgz -C build/linux $(NAME)-arm64
+	tar -zcf release/$(NAME)_$(VERSION)_darwin_amd64.tgz -C build/darwin $(NAME)-amd64
+	tar -zcf release/$(NAME)_$(VERSION)_darwin_arm64.tgz -C build/darwin $(NAME)-arm64
+	cp build/deb/$(NAME)_$(VERSION)_amd64.deb release/$(NAME)_$(VERSION)_amd64.deb
+	cp build/deb/$(NAME)_$(VERSION)_arm64.deb release/$(NAME)_$(VERSION)_arm64.deb
+	bin/gh-release create $(MAINTAINER)/$(REPOSITORY) $(VERSION) $(shell git rev-parse --abbrev-ref HEAD)
+	bin/gh-release-body $(MAINTAINER)/$(REPOSITORY) v$(VERSION)
+
+release-packagecloud:
+	@$(MAKE) release-packagecloud-deb
+
+release-packagecloud-deb: build/deb/$(NAME)_$(VERSION)_amd64.deb build/deb/$(NAME)_$(VERSION)_arm64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/ubuntu/jammy   build/deb/$(NAME)_$(VERSION)_amd64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/ubuntu/noble   build/deb/$(NAME)_$(VERSION)_amd64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/bullseye build/deb/$(NAME)_$(VERSION)_amd64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/bookworm build/deb/$(NAME)_$(VERSION)_amd64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/trixie   build/deb/$(NAME)_$(VERSION)_amd64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/ubuntu/jammy    build/deb/$(NAME)_$(VERSION)_arm64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/ubuntu/noble    build/deb/$(NAME)_$(VERSION)_arm64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/bullseye build/deb/$(NAME)_$(VERSION)_arm64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/bookworm build/deb/$(NAME)_$(VERSION)_arm64.deb
+	package_cloud push $(PACKAGECLOUD_REPOSITORY)/debian/trixie   build/deb/$(NAME)_$(VERSION)_arm64.deb
+
+validate:
+	mkdir -p validation
+	lintian build/deb/$(NAME)_$(VERSION)_amd64.deb || true
+	lintian build/deb/$(NAME)_$(VERSION)_arm64.deb || true
+	dpkg-deb --info build/deb/$(NAME)_$(VERSION)_amd64.deb
+	dpkg-deb --info build/deb/$(NAME)_$(VERSION)_arm64.deb
+	dpkg -c build/deb/$(NAME)_$(VERSION)_amd64.deb
+	dpkg -c build/deb/$(NAME)_$(VERSION)_arm64.deb
+	cd validation && ar -x ../build/deb/$(NAME)_$(VERSION)_amd64.deb
+	cd validation && ar -x ../build/deb/$(NAME)_$(VERSION)_arm64.deb
+	ls -lah build/deb validation
+	sha1sum build/deb/$(NAME)_$(VERSION)_amd64.deb
+	sha1sum build/deb/$(NAME)_$(VERSION)_arm64.deb
+	apt update
+	apt install -y net-tools util-linux
+	bats test.bats
+
+prebuild:
+	true
 
 test:
 	go test -v ./internal/...
