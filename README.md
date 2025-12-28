@@ -73,6 +73,82 @@ When deploying a project, services are deployed in the following order:
 - All other services are deployed in dependency order (dependencies before dependents)
 - If the `web` service has dependencies, it follows normal dependency ordering
 
+### Detected Database Services
+
+When using the `--skip-databases` flag, `docker-orchestrate` automatically detects database services by examining the service's image repository. A service is considered a database if its image matches any of the following repositories:
+
+- `clickhouse/clickhouse-server`
+- `couchdb` (library/couchdb)
+- `elasticsearch` (library/elasticsearch)
+- `dokku/docker-grafana-graphite`
+- `mariadb`
+- `getmeili/meilisearch`
+- `memcached` (library/memcached)
+- `mongo` (library/mongo)
+- `mysql` (library/mysql)
+- `nats` (library/nats)
+- `omnisci/core-os-cpu`
+- `postgres` (library/postgres)
+- `fanout/pushpin`
+- `rabbitmq` (library/rabbitmq)
+- `redis` (library/redis)
+- `rethinkdb` (library/rethinkdb)
+- `solr` (library/solr)
+- `typesense/typesense`
+
+Detection is based on the image repository name (short name), so it works regardless of the image tag or registry. For example, both `postgres:14` and `myregistry.com/library/postgres:latest` would be detected as database services.
+
+### Skipping Services by Label
+
+You can skip individual services by adding the `com.dokku.orchestrate/skip` label with a value of `"true"` to the service definition. This is useful when you want to exclude specific services from deployment without using the `--skip-databases` flag.
+
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    labels:
+      com.dokku.orchestrate/skip: "true"
+  api:
+    image: myapp/api:latest
+    # This service will be deployed normally
+```
+
+When a service has this label set to `"true"`, it will be skipped during deployment.
+
+**Note**: The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` will not trigger skipping.
+
+### Skipping Model Services
+
+Services that define models (via the `models` field) are automatically skipped during deployment. Model services are typically used for service composition and should not be deployed directly by `docker-orchestrate`.
+
+```yaml
+services:
+  app:
+    models:
+      model1:
+        # model configuration
+  web:
+    image: nginx:alpine
+    # This service will be deployed normally
+```
+
+### Skipping Provider Services
+
+Services that use external providers (defined via the `provider` field) are automatically skipped during deployment. Provider services are typically managed by external systems (like cloud providers) and should not be deployed by `docker-orchestrate`.
+
+```yaml
+services:
+  database:
+    provider:
+      type: awesomecloud
+      options:
+        type: mysql
+        foo: bar
+  web:
+    image: nginx:alpine
+    # This service will be deployed normally
+```
+
 ## Script Extensions
 
 In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.
@@ -186,83 +262,3 @@ Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-h
 - `.ContainerShortID`: First 12 characters of the container ID.
 - `.ContainerIP`: Internal IP address of the container.
 - `.ServiceName`: Name of the service.
-
-### Detected Database Services
-
-When using the `--skip-databases` flag, `docker-orchestrate` automatically detects database services by examining the service's image repository. A service is considered a database if its image matches any of the following repositories:
-
-- `clickhouse/clickhouse-server`
-- `couchdb` (library/couchdb)
-- `elasticsearch` (library/elasticsearch)
-- `dokku/docker-grafana-graphite`
-- `mariadb`
-- `getmeili/meilisearch`
-- `memcached` (library/memcached)
-- `mongo` (library/mongo)
-- `mysql` (library/mysql)
-- `nats` (library/nats)
-- `omnisci/core-os-cpu`
-- `postgres` (library/postgres)
-- `fanout/pushpin`
-- `rabbitmq` (library/rabbitmq)
-- `redis` (library/redis)
-- `rethinkdb` (library/rethinkdb)
-- `solr` (library/solr)
-- `typesense/typesense`
-
-Detection is based on the image repository name (short name), so it works regardless of the image tag or registry. For example, both `postgres:14` and `myregistry.com/library/postgres:latest` would be detected as database services.
-
-### Skipping Services by Label
-
-You can skip individual services by adding the `com.dokku.orchestrate/skip` label with a value of `"true"` to the service definition. This is useful when you want to exclude specific services from deployment without using the `--skip-databases` flag.
-
-```yaml
-services:
-  web:
-    image: nginx:alpine
-    labels:
-      com.dokku.orchestrate/skip: "true"
-  api:
-    image: myapp/api:latest
-    # This service will be deployed normally
-```
-
-When a service has this label set to `"true"`, it will be skipped during deployment regardless of other skip conditions (such as database detection). The label check takes precedence over the `--skip-databases` flag.
-
-**Note**: The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` will not trigger skipping.
-
-### Skipping Model Services
-
-Services that define models (via the `models` field) are automatically skipped during deployment. Model services are typically used for service composition and should not be deployed directly by `docker-orchestrate`.
-
-```yaml
-services:
-  app:
-    models:
-      model1:
-        # model configuration
-  web:
-    image: nginx:alpine
-    # This service will be deployed normally
-```
-
-Model services are skipped before any other skip checks (provider, labels, or database detection), ensuring they are never deployed regardless of other configuration.
-
-### Skipping Provider Services
-
-Services that use external providers (defined via the `provider` field) are automatically skipped during deployment. Provider services are typically managed by external systems (like cloud providers) and should not be deployed by `docker-orchestrate`.
-
-```yaml
-services:
-  database:
-    provider:
-      type: awesomecloud
-      options:
-        type: mysql
-        foo: bar
-  web:
-    image: nginx:alpine
-    # This service will be deployed normally
-```
-
-Provider services are skipped before skip label and database detection checks (but after model services), ensuring they are never deployed regardless of other configuration.
