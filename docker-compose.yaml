@@ -15,6 +15,11 @@ services:
         x-healthcheck-host-command: |
           echo "Healthcheck for container {{ .ContainerShortID }} failed!" >&2
           exit 0
+        x-pre-stop-command: |
+          echo "This can be used to interact with the container before it is stopped by the docker api"
+          echo "It can also be used to update other systems that are tracking containers within the docker compose project"
+          echo 'Pre-stop command running inside container'
+          exit 0
         x-pre-stop-host-command: |
           echo "This can be used to interact with the container before it is stopped by the docker api"
           echo 'Stop command running on host'
