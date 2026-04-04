@@ -7,7 +7,7 @@ require (
 	github.com/compose-spec/compose-go/v2 v2.10.1
 	github.com/docker/compose/v5 v5.1.0
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/josegonzalez/cli-skeleton v0.24.0
 	github.com/mitchellh/cli v1.1.5
 	github.com/novln/docker-parser v1.0.0
@@ -138,7 +138,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
