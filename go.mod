@@ -4,12 +4,13 @@ go 1.25.0
 
 require (
 	github.com/alexellis/go-execute/v2 v2.2.1
-	github.com/compose-spec/compose-go/v2 v2.10.1
+	github.com/compose-spec/compose-go/v2 v2.10.2
 	github.com/docker/compose/v5 v5.1.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/fatih/color v1.19.0
 	github.com/josegonzalez/cli-skeleton v0.24.0
 	github.com/mitchellh/cli v1.1.5
+	github.com/moby/docker-image-spec v1.3.1
 	github.com/novln/docker-parser v1.0.0
 	github.com/posener/complete v1.2.3
 	github.com/rs/zerolog v1.35.0
@@ -80,7 +81,6 @@ require (
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/buildkit v0.27.1 // indirect
-	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/moby/api v1.54.0 // indirect
