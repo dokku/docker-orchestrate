@@ -214,7 +214,8 @@ func TestRunHostScript(t *testing.T) {
 		}
 	})
 
-	t.Run("container IP error", func(t *testing.T) {
+	t.Run("container inspect error uses empty IP", func(t *testing.T) {
+		executed := false
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{}, errors.New("inspect error")
@@ -223,14 +224,18 @@ func TestRunHostScript(t *testing.T) {
 		input := runScriptInput{
 			Client: mockClient,
 			Executor: func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				executed = true
 				return ExecCommandResponse{}, nil
 			},
 			Script:      "echo hello",
 			ContainerID: "test-id",
 		}
 		err := runHostScript(ctx, input)
-		if err == nil || !strings.Contains(err.Error(), "inspect error") {
-			t.Errorf("expected inspect error, got %v", err)
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+		if !executed {
+			t.Errorf("expected script to be executed with empty container IP")
 		}
 	})
 

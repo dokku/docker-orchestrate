@@ -1,0 +1,18 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
+        x-pre-stop-host-command: |
+          touch /tmp/bats-sync-pre-started
+          sleep 1
+          touch /tmp/bats-sync-pre-completed
+        x-post-stop-host-command: |
+          touch /tmp/bats-sync-post-started
+          sleep 1
+          touch /tmp/bats-sync-post-completed
