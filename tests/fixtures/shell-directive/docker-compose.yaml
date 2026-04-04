@@ -14,6 +14,6 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-command: |
-          [[ -n "$BASH_VERSION" ]] && echo -n "bash-ok" > /tmp/bats-output/result
+          [[ -n "$$BASH_VERSION" ]] && echo -n "bash-ok" > /tmp/bats-output/result
         x-pre-stop-host-command: |
           touch /tmp/bats-shell-directive-host-completed
