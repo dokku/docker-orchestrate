@@ -13,6 +13,7 @@ type mockDockerClient struct {
 	DockerClientInterface
 	containerList        func(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	containerInspect     func(ctx context.Context, id string) (container.InspectResponse, error)
+	containerRemove      func(ctx context.Context, id string, options container.RemoveOptions) error
 	containerStart       func(ctx context.Context, id string, options container.StartOptions) error
 	containerTerminate   func(ctx context.Context, id string) error
 	containerRename      func(ctx context.Context, id, name string) error
@@ -37,6 +38,13 @@ func (m *mockDockerClient) ContainerInspect(ctx context.Context, id string) (con
 		return m.containerInspect(ctx, id)
 	}
 	return container.InspectResponse{}, nil
+}
+
+func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, options container.RemoveOptions) error {
+	if m.containerRemove != nil {
+		return m.containerRemove(ctx, id, options)
+	}
+	return nil
 }
 
 func (m *mockDockerClient) ContainerStart(ctx context.Context, id string, options container.StartOptions) error {
