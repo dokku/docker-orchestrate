@@ -295,6 +295,26 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
+	// Rename running containers to temporary names to avoid conflicts with docker compose
+	// naming during rolling updates and scale operations. The final renameContainersToConvention
+	// at the end of deploy assigns the proper names.
+	runningForRename, err := composeContainers(ctx, ComposeContainersInput{
+		Client:      input.Client,
+		ProjectName: input.ProjectName,
+		ServiceName: input.ServiceName,
+		Status:      "running",
+	})
+	if err != nil {
+		return fmt.Errorf("error getting running containers for rename: %v", err)
+	}
+
+	for _, c := range runningForRename {
+		tmpName := c.ID[:12] + "-tmp"
+		if err := input.Client.ContainerRename(ctx, c.ID, tmpName); err != nil {
+			input.Logger.Warn(fmt.Sprintf("Failed to rename container %s to temp name: %v", c.ID[:12], err))
+		}
+	}
+
 	// Get current running containers
 	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
