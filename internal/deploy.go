@@ -114,6 +114,7 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 			ProjectName:                 input.ProjectName,
 			ServiceName:                 serviceName,
 			SkipDatabases:               input.SkipDatabases,
+			StopTimeout:                 10,
 		})
 		if err != nil {
 			return err
@@ -186,6 +187,15 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	replicas := ServiceReplicas(input, service)
+
+	// Compute stop timeout from stop_grace_period, defaulting to 10 seconds
+	stopTimeout := 10
+	if service.StopGracePeriod != nil {
+		stopTimeout = int(time.Duration(*service.StopGracePeriod).Seconds())
+		if stopTimeout <= 0 {
+			stopTimeout = 10
+		}
+	}
 
 	// Get update_config settings
 	var updateConfig *types.UpdateConfig
@@ -343,6 +353,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectName:                 input.ProjectName,
 			ServiceName:                 input.ServiceName,
+			StopTimeout:                 stopTimeout,
 		})
 		if err != nil {
 			return err
@@ -393,6 +404,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
 			ServiceName:                 input.ServiceName,
+			StopTimeout:                 stopTimeout,
 		})
 		if err != nil {
 			return fmt.Errorf("error rolling update containers: %v", err)
@@ -434,6 +446,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
 			ServiceName:                 input.ServiceName,
+			StopTimeout:                 stopTimeout,
 		})
 		if err != nil {
 			return err

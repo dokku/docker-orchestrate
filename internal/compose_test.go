@@ -402,7 +402,7 @@ func TestRollingUpdateBatchStopFirst(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				terminatedIds = append(terminatedIds, id)
 				return nil
 			},
@@ -427,6 +427,7 @@ func TestRollingUpdateBatchStopFirst(t *testing.T) {
 			Parallelism:        1,
 			MaxFailureRatio:    0,
 			ContainersToUpdate: batch,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -471,7 +472,7 @@ func TestRollingUpdateBatchStopFirst(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				return nil
 			},
 		}
@@ -493,6 +494,7 @@ func TestRollingUpdateBatchStopFirst(t *testing.T) {
 			Parallelism:        1,
 			MaxFailureRatio:    0.1, // 10%
 			ContainersToUpdate: batch,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -561,7 +563,7 @@ func TestRollingUpdateContainers(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				terminatedIds = append(terminatedIds, id)
 				return nil
 			},
@@ -592,6 +594,7 @@ func TestRollingUpdateContainers(t *testing.T) {
 			Delay:              10 * time.Second,
 			Order:              "start-first",
 			ContainersToUpdate: containers,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -644,7 +647,7 @@ func TestRollingUpdateContainers(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				terminatedIds = append(terminatedIds, id)
 				return nil
 			},
@@ -669,6 +672,7 @@ func TestRollingUpdateContainers(t *testing.T) {
 			Parallelism:        1, // 2 batches
 			Order:              "stop-first",
 			ContainersToUpdate: containers,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -727,7 +731,7 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				terminatedIds = append(terminatedIds, id)
 				return nil
 			},
@@ -752,6 +756,7 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 			Parallelism:        1,
 			MaxFailureRatio:    0,
 			ContainersToUpdate: batch,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -799,7 +804,7 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 					},
 				}, nil
 			},
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				return nil
 			},
 		}
@@ -821,6 +826,7 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 			Parallelism:        1,
 			MaxFailureRatio:    0.1, // 10%
 			ContainersToUpdate: batch,
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -852,7 +858,7 @@ func TestScaleDownContainers(t *testing.T) {
 	t.Run("successful scale down", func(t *testing.T) {
 		terminatedIds := make([]string, 0)
 		mock := &mockDockerClient{
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				terminatedIds = append(terminatedIds, id)
 				return nil
 			},
@@ -872,6 +878,7 @@ func TestScaleDownContainers(t *testing.T) {
 			Logger:            logger,
 			ProjectName:       "proj",
 			ServiceName:       "web",
+			StopTimeout:       10,
 		}
 
 		err := scaleDownContainers(ctx, input)
@@ -893,7 +900,7 @@ func TestScaleDownContainers(t *testing.T) {
 
 	t.Run("no scale down needed", func(t *testing.T) {
 		mock := &mockDockerClient{
-			containerTerminate: func(ctx context.Context, id string) error {
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
 				t.Error("ContainerTerminate should not have been called")
 				return nil
 			},
@@ -909,11 +916,46 @@ func TestScaleDownContainers(t *testing.T) {
 			CurrentReplicas:   1,
 			DesiredReplicas:   1,
 			Logger:            logger,
+			StopTimeout:       10,
 		}
 
 		err := scaleDownContainers(ctx, input)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("custom stop timeout is passed through", func(t *testing.T) {
+		var capturedTimeout int
+		mock := &mockDockerClient{
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				capturedTimeout = timeoutSeconds
+				return nil
+			},
+		}
+
+		containers := []container.Summary{
+			{ID: "id1_oldest_container", Created: 100},
+			{ID: "id2_newest_container", Created: 200},
+		}
+
+		input := ScaleDownContainersInput{
+			Client:            mock,
+			CurrentContainers: containers,
+			CurrentReplicas:   2,
+			DesiredReplicas:   1,
+			Logger:            logger,
+			ProjectName:       "proj",
+			ServiceName:       "web",
+			StopTimeout:       30,
+		}
+
+		err := scaleDownContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedTimeout != 30 {
+			t.Errorf("expected timeout 30, got %d", capturedTimeout)
 		}
 	})
 }
@@ -963,6 +1005,7 @@ func TestScaleUpContainers(t *testing.T) {
 			DesiredReplicas:    2,
 			Parallelism:        1,
 			ExistingContainers: []container.Summary{},
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 
@@ -1009,6 +1052,7 @@ func TestScaleUpContainers(t *testing.T) {
 			Parallelism:        1,
 			MaxFailureRatio:    0.1, // 10%
 			ExistingContainers: []container.Summary{},
+			StopTimeout:        10,
 			TickerCh:           testTickerCh(),
 		}
 

@@ -15,7 +15,7 @@ type mockDockerClient struct {
 	containerInspect     func(ctx context.Context, id string) (container.InspectResponse, error)
 	containerRemove      func(ctx context.Context, id string, options container.RemoveOptions) error
 	containerStart       func(ctx context.Context, id string, options container.StartOptions) error
-	containerTerminate   func(ctx context.Context, id string) error
+	containerTerminate   func(ctx context.Context, id string, timeoutSeconds int) error
 	containerRename      func(ctx context.Context, id, name string) error
 	containerExecCreate  func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error)
 	containerExecStart   func(ctx context.Context, execID string, config container.ExecStartOptions) error
@@ -54,9 +54,9 @@ func (m *mockDockerClient) ContainerStart(ctx context.Context, id string, option
 	return nil
 }
 
-func (m *mockDockerClient) ContainerTerminate(ctx context.Context, id string) error {
+func (m *mockDockerClient) ContainerTerminate(ctx context.Context, id string, timeoutSeconds int) error {
 	if m.containerTerminate != nil {
-		return m.containerTerminate(ctx, id)
+		return m.containerTerminate(ctx, id, timeoutSeconds)
 	}
 	return nil
 }
