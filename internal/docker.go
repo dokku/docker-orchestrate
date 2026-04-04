@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	dockerClient "github.com/docker/docker/client"
 )
 
@@ -19,6 +20,7 @@ type DockerClientInterface interface {
 	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
+	ImageInspect(ctx context.Context, imageID string) (image.InspectResponse, error)
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 	ContainerRename(ctx context.Context, containerID, newName string) error
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
@@ -92,6 +94,11 @@ func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID strin
 	}
 
 	return nil
+}
+
+// ImageInspect inspects an image
+func (d *DockerClient) ImageInspect(ctx context.Context, imageID string) (image.InspectResponse, error) {
+	return d.cli.ImageInspect(ctx, imageID)
 }
 
 // ContainerExecCreate creates an exec instance in a container
