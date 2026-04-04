@@ -266,6 +266,35 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		executor = ExecCommand
 	}
 
+	// Clean up non-running containers before deploy
+	allContainers, err := composeContainers(ctx, ComposeContainersInput{
+		Client:      input.Client,
+		ProjectName: input.ProjectName,
+		ServiceName: input.ServiceName,
+	})
+	if err != nil {
+		return fmt.Errorf("error getting all containers for cleanup: %v", err)
+	}
+
+	for _, c := range allContainers {
+		if c.State == "running" {
+			continue
+		}
+
+		containerName := c.ID
+		if len(containerName) > 12 {
+			containerName = containerName[:12]
+		}
+		if len(c.Names) > 0 {
+			containerName = strings.TrimPrefix(c.Names[0], "/")
+		}
+
+		input.Logger.LogHeader2(fmt.Sprintf("Removing non-running container %s (state=%s)", containerName, c.State))
+		if err := input.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{}); err != nil {
+			input.Logger.Warn(fmt.Sprintf("Failed to remove container %s: %v", containerName, err))
+		}
+	}
+
 	// Get current running containers
 	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,

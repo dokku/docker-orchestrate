@@ -95,7 +95,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -332,4 +332,62 @@ teardown() {
   echo "status: $status"
   assert_success
   assert_equal "bash-ok" "$output"
+}
+
+@test "exited containers are cleaned up before deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/exited-container-cleanup"
+
+  # Initial deploy: scale to 3 running containers via docker compose directly
+  docker compose -p bats-exited-cleanup up -d --scale web=3 --wait
+  run docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q
+  echo "initial running containers: $output"
+  assert_equal "3" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  # Get container IDs for manipulation
+  container_to_stop=$(docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q | sed -n '1p')
+  container_to_kill=$(docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q | sed -n '2p')
+
+  # Stop one container gracefully (exit code 0)
+  docker stop "$container_to_stop"
+
+  # Kill another container with SIGKILL (non-zero exit code)
+  docker kill --signal=KILL "$container_to_kill"
+
+  # Verify intermediate state: 1 running, 2 exited
+  run docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q
+  echo "running after stop/kill: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  run docker ps -a --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=exited" -q
+  echo "exited after stop/kill: $output"
+  assert_equal "2" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  # Verify exit codes: one should be 0, one should be non-zero
+  exited_container_0=$(docker ps -a --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=exited" -q | sed -n '1p')
+  exited_container_1=$(docker ps -a --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=exited" -q | sed -n '2p')
+  exit_code_0=$(docker inspect --format '{{.State.ExitCode}}' "$exited_container_0")
+  exit_code_1=$(docker inspect --format '{{.State.ExitCode}}' "$exited_container_1")
+  echo "exit codes: $exit_code_0, $exit_code_1"
+
+  # One should be 0 and one should be non-zero (137 for SIGKILL)
+  if [[ "$exit_code_0" -eq 0 && "$exit_code_1" -ne 0 ]] || [[ "$exit_code_0" -ne 0 && "$exit_code_1" -eq 0 ]]; then
+    echo "exit code verification passed: one is 0, one is non-zero"
+  else
+    flunk "expected one exit code 0 and one non-zero, got: $exit_code_0 and $exit_code_1"
+  fi
+
+  # Redeploy with --replicas 3: should clean up exited containers and reach 3 running
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-exited-cleanup --replicas 3 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify final state: 3 running, 0 exited
+  run docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q
+  echo "final running: $output"
+  assert_equal "3" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  run docker ps -a --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=exited" -q
+  echo "final exited: $output"
+  assert_equal "" "$output"
 }

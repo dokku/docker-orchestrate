@@ -121,6 +121,142 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 	}
 }
 
+func TestDeployServiceCleansUpNonRunningContainers(t *testing.T) {
+	tests := []struct {
+		name               string
+		allContainers      []container.Summary
+		expectedRemovals   []string
+		removeError        error
+		expectDeployError  bool
+	}{
+		{
+			name: "removes_exited_containers",
+			allContainers: []container.Summary{
+				{ID: "aaaa11111111aaaa11111111", Names: []string{"/web-1"}, State: "running"},
+				{ID: "bbbb22222222bbbb22222222", Names: []string{"/web-2"}, State: "exited"},
+				{ID: "cccc33333333cccc33333333", Names: []string{"/web-3"}, State: "exited"},
+			},
+			expectedRemovals: []string{"bbbb22222222bbbb22222222", "cccc33333333cccc33333333"},
+		},
+		{
+			name: "removes_dead_containers",
+			allContainers: []container.Summary{
+				{ID: "aaaa11111111aaaa11111111", Names: []string{"/web-1"}, State: "running"},
+				{ID: "bbbb22222222bbbb22222222", Names: []string{"/web-2"}, State: "dead"},
+			},
+			expectedRemovals: []string{"bbbb22222222bbbb22222222"},
+		},
+		{
+			name: "removes_created_containers",
+			allContainers: []container.Summary{
+				{ID: "aaaa11111111aaaa11111111", Names: []string{"/web-1"}, State: "created"},
+			},
+			expectedRemovals: []string{"aaaa11111111aaaa11111111"},
+		},
+		{
+			name: "no_non_running_containers",
+			allContainers: []container.Summary{
+				{ID: "aaaa11111111aaaa11111111", Names: []string{"/web-1"}, State: "running"},
+			},
+			expectedRemovals: []string{},
+		},
+		{
+			name:             "no_containers",
+			allContainers:    []container.Summary{},
+			expectedRemovals: []string{},
+		},
+		{
+			name: "remove_failure_continues",
+			allContainers: []container.Summary{
+				{ID: "aaaa11111111aaaa11111111", Names: []string{"/web-1"}, State: "exited"},
+			},
+			expectedRemovals: []string{"aaaa11111111aaaa11111111"},
+			removeError:      fmt.Errorf("container in use"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var removedIDs []string
+
+			firstCall := true
+			mockClient := &mockDockerClient{
+				containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+					statusFilter := options.Filters.Get("status")
+					if len(statusFilter) == 0 && firstCall {
+						// First unfiltered call: return all containers for cleanup
+						firstCall = false
+						return tt.allContainers, nil
+					}
+					// All subsequent calls (filtered to running): return empty
+					// so no rolling update or scaling happens
+					return []container.Summary{}, nil
+				},
+				containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
+					removedIDs = append(removedIDs, id)
+					return tt.removeError
+				},
+			}
+
+			mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				return ExecCommandResponse{ExitCode: 0}, nil
+			}
+
+			project := &types.Project{
+				Services: types.Services{
+					"web": types.ServiceConfig{
+						Name: "web",
+					},
+				},
+			}
+
+			var buf bytes.Buffer
+			logger := &command.ZerologUi{
+				StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				OriginalFields:    nil,
+				Ui:                nil,
+				OutputIndentField: false,
+			}
+
+			input := DeployServiceInput{
+				Client:                mockClient,
+				Executor:              mockExecutor,
+				ComposeFile:           "/tmp/docker-compose.yaml",
+				ContainerNameTemplate: "{{.ServiceName}}",
+				Logger:                logger,
+				Project:               project,
+				ProjectName:           "test",
+				ServiceName:           "web",
+			}
+
+			err := DeployService(context.Background(), input)
+
+			if tt.expectDeployError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(removedIDs) != len(tt.expectedRemovals) {
+				t.Errorf("expected %d removals, got %d. Removed: %v", len(tt.expectedRemovals), len(removedIDs), removedIDs)
+				return
+			}
+
+			for i, expectedID := range tt.expectedRemovals {
+				if removedIDs[i] != expectedID {
+					t.Errorf("expected removal[%d] = %s, got %s", i, expectedID, removedIDs[i])
+				}
+			}
+		})
+	}
+}
+
 func TestIsDatabaseService(t *testing.T) {
 	var buf bytes.Buffer
 	logger := &command.ZerologUi{
