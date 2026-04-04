@@ -318,9 +318,27 @@ teardown() {
   # verify host command ran
   [ -f /tmp/bats-shell-directive-host-completed ]
 
-  # verify container pre-stop command ran with bash (via SHELL directive detection)
+  # verify container SHELL config is set
+  container_id=$(docker compose -p bats-shell-directive ps -q web)
+  run docker inspect --format '{{json .Config.Shell}}' "$container_id"
+  echo "Config.Shell: $output"
+
+  # list volume contents for diagnostics
+  run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest ls -la /data/
+  echo "volume contents: $output"
+
+  # check that the container script ran at all
+  run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest cat /data/executed
+  echo "executed marker output: $output"
+  echo "executed marker status: $status"
+  assert_success
+  assert_equal "script-ran" "$output"
+
+  # check that bash was used (SHELL directive detected)
   # the script uses [[ ]] which only works in bash, not dash/sh
-  # result is written to a named volume
-  result=$(docker run --rm -v bats-shell-directive_shell-test:/data alpine cat /data/result 2>/dev/null)
-  assert_equal "bash-ok" "$result"
+  run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest cat /data/result
+  echo "result output: $output"
+  echo "result status: $status"
+  assert_success
+  assert_equal "bash-ok" "$output"
 }
