@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 )
 
 type mockDockerClient struct {
@@ -20,6 +21,7 @@ type mockDockerClient struct {
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
 	copyToContainer      func(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
+	imageInspect         func(ctx context.Context, imageID string) (image.InspectResponse, error)
 	renamedContainers    map[string]string
 }
 
@@ -92,6 +94,13 @@ func (m *mockDockerClient) ContainerExecInspect(ctx context.Context, execID stri
 		return m.containerExecInspect(ctx, execID)
 	}
 	return container.ExecInspect{}, nil
+}
+
+func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string) (image.InspectResponse, error) {
+	if m.imageInspect != nil {
+		return m.imageInspect(ctx, imageID)
+	}
+	return image.InspectResponse{}, nil
 }
 
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {

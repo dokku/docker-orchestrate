@@ -90,15 +90,21 @@ setup_file() {
 setup() {
   rm -f /tmp/bats-detached-*
   rm -f /tmp/bats-sync-*
+  rm -f /tmp/bats-shebang-*
+  rm -f /tmp/bats-shell-directive-*
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
+  docker compose -p bats-shell-directive down --remove-orphans --volumes --timeout 5 2>/dev/null || true
+
   rm -f /tmp/bats-detached-*
   rm -f /tmp/bats-sync-*
+  rm -f /tmp/bats-shebang-*
+  rm -f /tmp/bats-shell-directive-*
 }
 
 @test "default" {
@@ -208,4 +214,122 @@ teardown() {
   [ -f /tmp/bats-sync-pre-completed ]
   [ -f /tmp/bats-sync-post-started ]
   [ -f /tmp/bats-sync-post-completed ]
+}
+
+@test "shebang sh executes correctly" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shebang-sh"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  [ -f /tmp/bats-shebang-sh-completed ]
+}
+
+@test "shebang bash executes correctly" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shebang-bash"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # marker is only created if BASH_VERSION is set, proving bash ran
+  [ -f /tmp/bats-shebang-bash-completed ]
+}
+
+@test "shebang dash executes correctly" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shebang-dash"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  [ -f /tmp/bats-shebang-dash-completed ]
+}
+
+@test "shebang python3 executes correctly" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shebang-python3"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # marker is created via python3 pathlib, proving python3 ran
+  [ -f /tmp/bats-shebang-python3-completed ]
+}
+
+@test "default shebang uses sh" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shebang-default"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # no shebang in script, should default to #!/bin/sh
+  [ -f /tmp/bats-shebang-default-completed ]
+}
+
+@test "SHELL directive /bin/bash -c is detected for container scripts" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/shell-directive"
+
+  # build the custom image with SHELL ["/bin/bash", "-c"]
+  docker compose -p bats-shell-directive build
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # verify host command ran
+  [ -f /tmp/bats-shell-directive-host-completed ]
+
+  # check that the container script ran at all
+  run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest cat /data/executed
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "script-ran" "$output"
+
+  # check that bash was used (image SHELL directive detected)
+  # the script uses [[ ]] which only works in bash, not dash/sh
+  run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest cat /data/result
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "bash-ok" "$output"
 }

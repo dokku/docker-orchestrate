@@ -12,7 +12,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 )
 
 // mockConn is a minimal mock connection for testing
@@ -708,16 +710,24 @@ func TestRunContainerScript(t *testing.T) {
 		}
 	})
 
-	t.Run("script without shebang uses Config.Shell", func(t *testing.T) {
+	t.Run("script without shebang uses image Config.Shell", func(t *testing.T) {
 		execCreateCalled := false
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
 					ContainerJSONBase: &container.ContainerJSONBase{
-						ID: id,
+						ID:    id,
+						Image: "test-image-id",
 					},
-					Config: &container.Config{
-						Shell: []string{"/bin/bash", "-i"},
+					Config: &container.Config{},
+				}, nil
+			},
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{
+					Config: &dockerspec.DockerOCIImageConfig{
+						DockerOCIImageConfigExt: dockerspec.DockerOCIImageConfigExt{
+							Shell: []string{"/bin/bash", "-i"},
+						},
 					},
 				}, nil
 			},
@@ -816,16 +826,24 @@ func TestRunContainerScript(t *testing.T) {
 		}
 	})
 
-	t.Run("Config.Shell with -c already included avoids double -c", func(t *testing.T) {
+	t.Run("image Config.Shell with -c already included avoids double -c", func(t *testing.T) {
 		var capturedCmd []string
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
 					ContainerJSONBase: &container.ContainerJSONBase{
-						ID: id,
+						ID:    id,
+						Image: "test-image-id",
 					},
-					Config: &container.Config{
-						Shell: []string{"/bin/bash", "-c"},
+					Config: &container.Config{},
+				}, nil
+			},
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{
+					Config: &dockerspec.DockerOCIImageConfig{
+						DockerOCIImageConfigExt: dockerspec.DockerOCIImageConfigExt{
+							Shell: []string{"/bin/bash", "-c"},
+						},
 					},
 				}, nil
 			},
@@ -878,16 +896,24 @@ func TestRunContainerScript(t *testing.T) {
 		}
 	})
 
-	t.Run("Config.Shell non-shell interpreter used as-is", func(t *testing.T) {
+	t.Run("image Config.Shell non-shell interpreter used as-is", func(t *testing.T) {
 		var capturedCmd []string
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
 					ContainerJSONBase: &container.ContainerJSONBase{
-						ID: id,
+						ID:    id,
+						Image: "test-image-id",
 					},
-					Config: &container.Config{
-						Shell: []string{"/usr/bin/python3"},
+					Config: &container.Config{},
+				}, nil
+			},
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{
+					Config: &dockerspec.DockerOCIImageConfig{
+						DockerOCIImageConfigExt: dockerspec.DockerOCIImageConfigExt{
+							Shell: []string{"/usr/bin/python3"},
+						},
 					},
 				}, nil
 			},

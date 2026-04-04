@@ -287,20 +287,34 @@ func runContainerScript(ctx context.Context, input RunContainerScriptInput) erro
 	if len(shebang) > 0 {
 		// Use the interpreter from shebang
 		cmd = shebang
-	} else if containerJSON.Config != nil && len(containerJSON.Config.Shell) > 0 {
-		shell := containerJSON.Config.Shell
-		if isShellInterpreter(shell[0]) {
-			// Shell interpreter: use [path, "-c"] to avoid double -c
-			// when Config.Shell already contains "-c" (e.g., SHELL ["/bin/bash", "-c"])
-			cmd = []string{shell[0], "-c"}
-		} else {
-			// Non-shell interpreter (python, php, etc.): use as-is
-			cmd = make([]string, len(shell))
-			copy(cmd, shell)
-		}
 	} else {
-		// Fall back to sh
-		cmd = []string{"/bin/sh", "-c"}
+		// Try container Config.Shell first, then fall back to image Config.Shell
+		// Docker does not populate Config.Shell on containers, only on images,
+		// so we need to inspect the image to get the SHELL directive.
+		var shell []string
+		if containerJSON.Config != nil && len(containerJSON.Config.Shell) > 0 {
+			shell = containerJSON.Config.Shell
+		} else if containerJSON.Image != "" {
+			imageJSON, err := input.Client.ImageInspect(ctx, containerJSON.Image)
+			if err == nil && imageJSON.Config != nil && len(imageJSON.Config.Shell) > 0 {
+				shell = imageJSON.Config.Shell
+			}
+		}
+
+		if len(shell) > 0 {
+			if isShellInterpreter(shell[0]) {
+				// Shell interpreter: use [path, "-c"] to avoid double -c
+				// when Config.Shell already contains "-c" (e.g., SHELL ["/bin/bash", "-c"])
+				cmd = []string{shell[0], "-c"}
+			} else {
+				// Non-shell interpreter (python, php, etc.): use as-is
+				cmd = make([]string, len(shell))
+				copy(cmd, shell)
+			}
+		} else {
+			// Fall back to sh
+			cmd = []string{"/bin/sh", "-c"}
+		}
 	}
 
 	// Remove shebang from script if present

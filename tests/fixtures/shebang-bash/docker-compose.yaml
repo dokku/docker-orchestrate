@@ -1,0 +1,15 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
+        x-pre-stop-host-command: |
+          #!/bin/bash
+          if [ -n "$$BASH_VERSION" ]; then
+            touch /tmp/bats-shebang-bash-completed
+          fi
