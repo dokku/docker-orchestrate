@@ -1,0 +1,20 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
+        x-pre-stop-host-command: |
+          touch /tmp/bats-detached-both-pre-started
+          sleep 5
+          touch /tmp/bats-detached-both-pre-completed
+        x-pre-stop-host-command-detached: true
+        x-post-stop-host-command: |
+          touch /tmp/bats-detached-both-post-started
+          sleep 5
+          touch /tmp/bats-detached-both-post-completed
+        x-post-stop-host-command-detached: true
