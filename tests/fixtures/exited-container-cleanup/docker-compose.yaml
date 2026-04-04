@@ -3,7 +3,7 @@ services:
   web:
     image: nginx:latest
     deploy:
-      replicas: 1
+      replicas: 3
       update_config:
         order: start-first
         delay: 0s

@@ -1008,7 +1008,12 @@ type RenameContainersToConventionInput struct {
 }
 
 // renameContainersToConvention renames all containers to follow the naming convention
-// using the provided Go template. The template has access to .ProjectName, .ServiceName, and .InstanceID
+// using the provided Go template. The template has access to .ProjectName, .ServiceName, and .InstanceID.
+//
+// Uses a two-pass approach to avoid name conflicts: first renames to temporary names,
+// then renames to final names. This handles cases where container A's current name is
+// container B's desired name (e.g., after docker compose assigns names in a different
+// order than the creation-time sort).
 func renameContainersToConvention(ctx context.Context, input RenameContainersToConventionInput) error {
 	if len(input.Containers) == 0 {
 		return nil
@@ -1022,11 +1027,17 @@ func renameContainersToConvention(ctx context.Context, input RenameContainersToC
 
 	sortContainersByCreationTime(input.Containers, false)
 
-	// Rename each container with instance ID starting from 1
+	// Build rename plan: compute desired names for each container in ascending creation order
+	type renamePlan struct {
+		containerID string
+		currentName string
+		desiredName string
+	}
+
+	var toRename []renamePlan
 	for i, c := range input.Containers {
 		instanceID := i + 1
 
-		// Execute the template
 		var buf bytes.Buffer
 		data := ContainerNameTemplateData{
 			ProjectName: input.ProjectName,
@@ -1036,18 +1047,34 @@ func renameContainersToConvention(ctx context.Context, input RenameContainersToC
 		if err := tmpl.Execute(&buf, data); err != nil {
 			return fmt.Errorf("error executing container name template: %v", err)
 		}
-		newName := buf.String()
+		desiredName := buf.String()
 
-		// Get current container name to check if rename is needed
 		currentName := ""
 		if len(c.Names) > 0 {
 			currentName = strings.TrimPrefix(c.Names[0], "/")
 		}
 
-		if currentName != newName {
-			if err := input.Client.ContainerRename(ctx, c.ID, newName); err != nil {
-				return fmt.Errorf("error renaming container %s to %s: %v", c.ID[:12], newName, err)
-			}
+		if currentName != desiredName {
+			toRename = append(toRename, renamePlan{
+				containerID: c.ID,
+				currentName: currentName,
+				desiredName: desiredName,
+			})
+		}
+	}
+
+	// Pass 1: rename to temporary names to avoid conflicts
+	for _, r := range toRename {
+		tmpName := r.desiredName + "-tmp"
+		if err := input.Client.ContainerRename(ctx, r.containerID, tmpName); err != nil {
+			return fmt.Errorf("error renaming container %s to %s: %v", r.containerID[:12], tmpName, err)
+		}
+	}
+
+	// Pass 2: rename from temporary to final names in ascending creation order
+	for _, r := range toRename {
+		if err := input.Client.ContainerRename(ctx, r.containerID, r.desiredName); err != nil {
+			return fmt.Errorf("error renaming container %s to %s: %v", r.containerID[:12], r.desiredName, err)
 		}
 	}
 

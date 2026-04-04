@@ -283,6 +283,63 @@ func TestRenameContainersToConvention(t *testing.T) {
 		}
 	})
 
+	t.Run("rename with name conflicts", func(t *testing.T) {
+		// Simulates docker compose assigning names in different order than creation time.
+		// Container created first has name proj-web-3, container created last has name proj-web-1.
+		// Without two-pass rename, renaming the first container to proj-web-1 would fail
+		// because the last container still holds that name.
+		var renameCalls []struct{ id, name string }
+		mock := &mockDockerClient{
+			containerRename: func(ctx context.Context, id, name string) error {
+				renameCalls = append(renameCalls, struct{ id, name string }{id, name})
+				return nil
+			},
+		}
+		conflictContainers := []container.Summary{
+			{ID: "id1_container_id", Names: []string{"/proj-web-3"}, Created: 100},
+			{ID: "id2_container_id", Names: []string{"/proj-web-2"}, Created: 200},
+			{ID: "id3_container_id", Names: []string{"/proj-web-1"}, Created: 300},
+		}
+		input := RenameContainersToConventionInput{
+			Client:       mock,
+			Containers:   conflictContainers,
+			ProjectName:  "proj",
+			ServiceName:  "web",
+			NameTemplate: "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}",
+		}
+
+		err := renameContainersToConvention(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// id2 already has correct name (proj-web-2), so only id1 and id3 are renamed
+		// 4 calls: 2 to tmp names (pass 1), 2 to final names (pass 2)
+		if len(renameCalls) != 4 {
+			t.Errorf("expected 4 rename calls, got %d", len(renameCalls))
+			for i, call := range renameCalls {
+				t.Logf("  call %d: %s -> %s", i, call.id, call.name)
+			}
+			t.FailNow()
+		}
+
+		// Pass 1: rename to tmp names in ascending creation order
+		if renameCalls[0].id != "id1_container_id" || renameCalls[0].name != "proj-web-1-tmp" {
+			t.Errorf("pass 1 call 0: expected id1->proj-web-1-tmp, got %s->%s", renameCalls[0].id, renameCalls[0].name)
+		}
+		if renameCalls[1].id != "id3_container_id" || renameCalls[1].name != "proj-web-3-tmp" {
+			t.Errorf("pass 1 call 1: expected id3->proj-web-3-tmp, got %s->%s", renameCalls[1].id, renameCalls[1].name)
+		}
+
+		// Pass 2: rename to final names in ascending creation order
+		if renameCalls[2].id != "id1_container_id" || renameCalls[2].name != "proj-web-1" {
+			t.Errorf("pass 2 call 0: expected id1->proj-web-1, got %s->%s", renameCalls[2].id, renameCalls[2].name)
+		}
+		if renameCalls[3].id != "id3_container_id" || renameCalls[3].name != "proj-web-3" {
+			t.Errorf("pass 2 call 1: expected id3->proj-web-3, got %s->%s", renameCalls[3].id, renameCalls[3].name)
+		}
+	})
+
 	t.Run("rename error", func(t *testing.T) {
 		mock := &mockDockerClient{
 			containerRename: func(ctx context.Context, id, name string) error {

@@ -337,8 +337,11 @@ teardown() {
 @test "exited containers are cleaned up before deploy" {
   cd "${BATS_TEST_DIRNAME}/tests/fixtures/exited-container-cleanup"
 
-  # Initial deploy: scale to 3 running containers via docker compose directly
-  docker compose -p bats-exited-cleanup up -d --scale web=3 --wait
+  # Initial deploy: 3 running containers via docker-orchestrate
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-exited-cleanup web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
   run docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q
   echo "initial running containers: $output"
   assert_equal "3" "$(echo "$output" | wc -l | tr -d ' ')"
