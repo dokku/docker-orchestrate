@@ -159,10 +159,7 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 		return fmt.Errorf("error parsing %s command template: %v", input.ScriptType, err)
 	}
 
-	containerIP, err := getContainerIP(ctx, input.Client, input.ContainerID)
-	if err != nil {
-		return fmt.Errorf("error getting container IP: %v", err)
-	}
+	containerIP, _ := getContainerIP(ctx, input.Client, input.ContainerID)
 
 	containerShortID := input.ContainerID
 	if len(containerShortID) > 12 {
