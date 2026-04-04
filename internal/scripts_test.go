@@ -122,7 +122,7 @@ func TestRunHostScript(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		expected := "#!/usr/bin/env bash\necho 12345678901234567890 172.17.0.2 123456789012 web"
+		expected := "#!/bin/sh\necho 12345678901234567890 172.17.0.2 123456789012 web"
 		if !strings.Contains(executedCommand, expected) {
 			t.Errorf("expected command to contain %q, got %q", expected, executedCommand)
 		}
@@ -493,6 +493,40 @@ func TestGetContainerIP(t *testing.T) {
 	})
 }
 
+func TestIsShellInterpreter(t *testing.T) {
+	tests := []struct {
+		name        string
+		interpreter string
+		expected    bool
+	}{
+		{"full path bash", "/bin/bash", true},
+		{"bare bash", "bash", true},
+		{"full path sh", "/bin/sh", true},
+		{"bare sh", "sh", true},
+		{"full path dash", "/bin/dash", true},
+		{"full path ash", "/bin/ash", true},
+		{"full path zsh", "/usr/bin/zsh", true},
+		{"bare zsh", "zsh", true},
+		{"full path ksh", "/bin/ksh", true},
+		{"full path csh", "/bin/csh", true},
+		{"full path tcsh", "/bin/tcsh", true},
+		{"full path fish", "/usr/bin/fish", true},
+		{"python3", "/usr/bin/python3", false},
+		{"php", "/usr/bin/php", false},
+		{"node", "node", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isShellInterpreter(tt.interpreter)
+			if result != tt.expected {
+				t.Errorf("isShellInterpreter(%q) = %v, want %v", tt.interpreter, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestParseShebang(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -517,7 +551,7 @@ func TestParseShebang(t *testing.T) {
 		{
 			name:     "python3 shebang",
 			script:   "#!/usr/bin/python3\nprint('hello')",
-			expected: []string{"/usr/bin/python3", "-c"},
+			expected: []string{"/usr/bin/python3"},
 		},
 		{
 			name:     "direct bash path",
@@ -528,6 +562,26 @@ func TestParseShebang(t *testing.T) {
 			name:     "env sh",
 			script:   "#!/usr/bin/env sh\necho hello",
 			expected: []string{"/bin/sh", "-c"},
+		},
+		{
+			name:     "python3 direct path no -c",
+			script:   "#!/usr/bin/python3\nprint('hello')",
+			expected: []string{"/usr/bin/python3"},
+		},
+		{
+			name:     "env ruby no -c",
+			script:   "#!/usr/bin/env ruby\nputs 'hello'",
+			expected: []string{"/usr/bin/env", "ruby"},
+		},
+		{
+			name:     "env python3 no -c",
+			script:   "#!/usr/bin/env python3\nprint('hello')",
+			expected: []string{"/usr/bin/env", "python3"},
+		},
+		{
+			name:     "env zsh with -c",
+			script:   "#!/usr/bin/env zsh\necho hello",
+			expected: []string{"/usr/bin/env", "zsh", "-c"},
 		},
 	}
 
@@ -754,6 +808,130 @@ func TestRunContainerScript(t *testing.T) {
 		}
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("Config.Shell with -c already included avoids double -c", func(t *testing.T) {
+		var capturedCmd []string
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						Shell: []string{"/bin/bash", "-c"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				capturedCmd = config.Cmd
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   nil,
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{
+					ExecID:      execID,
+					ContainerID: "test-container",
+					Running:     false,
+					ExitCode:    0,
+				}, nil
+			},
+		}
+
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "echo hello",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "test-service",
+		}
+
+		err := runContainerScript(ctx, input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		expectedCmd := []string{"/bin/bash", "-c", "/tmp/pre-stop.sh"}
+		if len(capturedCmd) != len(expectedCmd) {
+			t.Fatalf("expected cmd %v, got %v", expectedCmd, capturedCmd)
+		}
+		for i := range capturedCmd {
+			if capturedCmd[i] != expectedCmd[i] {
+				t.Errorf("expected cmd %v, got %v", expectedCmd, capturedCmd)
+				break
+			}
+		}
+	})
+
+	t.Run("Config.Shell non-shell interpreter used as-is", func(t *testing.T) {
+		var capturedCmd []string
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						Shell: []string{"/usr/bin/python3"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				capturedCmd = config.Cmd
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   nil,
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{
+					ExecID:      execID,
+					ContainerID: "test-container",
+					Running:     false,
+					ExitCode:    0,
+				}, nil
+			},
+		}
+
+		input := RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Script:      "print('hello')",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "test-service",
+		}
+
+		err := runContainerScript(ctx, input)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+
+		expectedCmd := []string{"/usr/bin/python3", "/tmp/pre-stop.sh"}
+		if len(capturedCmd) != len(expectedCmd) {
+			t.Fatalf("expected cmd %v, got %v", expectedCmd, capturedCmd)
+		}
+		for i := range capturedCmd {
+			if capturedCmd[i] != expectedCmd[i] {
+				t.Errorf("expected cmd %v, got %v", expectedCmd, capturedCmd)
+				break
+			}
 		}
 	})
 }

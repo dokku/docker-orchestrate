@@ -216,13 +216,16 @@ services:
 - Scripts run synchronously - `docker-orchestrate` waits for completion before stopping the container
 - Interpreter selection:
   - If the script has a shebang (e.g., `#!/usr/bin/env bash`), that interpreter is used
-  - Otherwise, the container's `Config.Shell` property is used
+  - Otherwise, the container's `Config.Shell` property is used:
+    - For shell interpreters (sh, bash, dash, ash, zsh, ksh, csh, tcsh, fish): runs with `-c` flag
+    - For non-shell interpreters (python, php, etc.): runs the script directly
   - Falls back to `/bin/sh` if neither is available
 - Shebang parsing:
   - `#!/usr/bin/env bash` → `/bin/bash -c`
   - `#!/bin/sh` → `/bin/sh -c`
-  - `#!/usr/bin/python3` → `/usr/bin/python3 -c`
-  - Other interpreters are supported based on the shebang
+  - `#!/usr/bin/python3` → `/usr/bin/python3`
+  - Other shell interpreters are supported based on the shebang with `-c` flag
+  - Non-shell interpreters are used directly without `-c`
 
 **Note**: The container must have the following binaries available:
 
@@ -262,3 +265,18 @@ Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-h
 - `.ContainerShortID`: First 12 characters of the container ID.
 - `.ContainerIP`: Internal IP address of the container.
 - `.ServiceName`: Name of the service.
+
+### Host Command Shell
+
+Host commands (`x-healthcheck-host-command`, `x-pre-stop-host-command`, `x-post-stop-host-command`) are executed on the host machine using `/bin/sh` by default. To use a different interpreter, add a shebang as the first line of the command:
+
+```yaml
+services:
+  web:
+    deploy:
+      update_config:
+        x-pre-stop-host-command: |
+          #!/usr/bin/env bash
+          echo "Using bash-specific features"
+          declare -A mymap
+```

@@ -39,6 +39,23 @@ func getContainerIP(ctx context.Context, client DockerClientInterface, container
 	return containerIP, nil
 }
 
+// isShellInterpreter checks if the given interpreter path is a known shell.
+// Accepts full paths (e.g., "/bin/bash") or bare names (e.g., "bash").
+func isShellInterpreter(interpreter string) bool {
+	knownShells := map[string]bool{
+		"sh":   true,
+		"bash": true,
+		"dash": true,
+		"ash":  true,
+		"zsh":  true,
+		"ksh":  true,
+		"csh":  true,
+		"tcsh": true,
+		"fish": true,
+	}
+	return knownShells[filepath.Base(interpreter)]
+}
+
 // parseShebang parses a shebang line and returns the interpreter command
 // Examples:
 //   - "#!/usr/bin/env bash" -> ["/bin/bash", "-c"]
@@ -70,11 +87,11 @@ func parseShebang(script string) []string {
 			return []string{"/bin/bash", "-c"}
 		case "sh":
 			return []string{"/bin/sh", "-c"}
-		case "python", "python3":
-			return []string{"/usr/bin/env", interpreter, "-c"}
 		default:
-			// Try to find the interpreter in common locations
-			return []string{"/usr/bin/env", interpreter, "-c"}
+			if isShellInterpreter(interpreter) {
+				return []string{"/usr/bin/env", interpreter, "-c"}
+			}
+			return []string{"/usr/bin/env", interpreter}
 		}
 	}
 
@@ -85,12 +102,10 @@ func parseShebang(script string) []string {
 	}
 
 	interpreter := parts[0]
-	// Add -c flag for shell-like interpreters
-	if strings.Contains(interpreter, "sh") || strings.Contains(interpreter, "bash") {
+	if isShellInterpreter(interpreter) {
 		return []string{interpreter, "-c"}
 	}
-	// For other interpreters, try with -c
-	return []string{interpreter, "-c"}
+	return []string{interpreter}
 }
 
 // ScriptTemplateData is the data structure for the healthcheck command template
@@ -168,7 +183,7 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 
 	command := commandBuf.String()
 	if input.Shebang == "" {
-		input.Shebang = "#!/usr/bin/env bash"
+		input.Shebang = "#!/bin/sh"
 	}
 	if !strings.HasPrefix(command, "#!") {
 		command = input.Shebang + "\n" + command
@@ -276,8 +291,16 @@ func runContainerScript(ctx context.Context, input RunContainerScriptInput) erro
 		// Use the interpreter from shebang
 		cmd = shebang
 	} else if containerJSON.Config != nil && len(containerJSON.Config.Shell) > 0 {
-		// Use Config.Shell
-		cmd = append(containerJSON.Config.Shell, "-c")
+		shell := containerJSON.Config.Shell
+		if isShellInterpreter(shell[0]) {
+			// Shell interpreter: use [path, "-c"] to avoid double -c
+			// when Config.Shell already contains "-c" (e.g., SHELL ["/bin/bash", "-c"])
+			cmd = []string{shell[0], "-c"}
+		} else {
+			// Non-shell interpreter (python, php, etc.): use as-is
+			cmd = make([]string, len(shell))
+			copy(cmd, shell)
+		}
 	} else {
 		// Fall back to sh
 		cmd = []string{"/bin/sh", "-c"}
