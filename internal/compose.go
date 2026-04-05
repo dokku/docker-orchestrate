@@ -798,6 +798,8 @@ type ScaleUpContainersInput struct {
 	Monitor time.Duration
 	// Parallelism is the number of containers to update simultaneously
 	Parallelism int
+	// PostStartHooks are the compose spec post_start hooks to run inside the container after starting
+	PostStartHooks []types.ServiceHook
 	// ProjectDir is the project directory
 	ProjectDir string
 	// ProjectName is the name of the project
@@ -909,6 +911,65 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						batchErr = fmt.Errorf("error starting container %s: %v", c.ID[:12], err)
 					}
 					mu.Unlock()
+					return
+				}
+
+				// Run compose spec post_start hooks inside container
+				if err := runContainerHooks(ctx, RunContainerHooksInput{
+					Client:      input.Client,
+					ContainerID: c.ID,
+					Hooks:       input.PostStartHooks,
+					ServiceName: input.ServiceName,
+				}); err != nil {
+					input.Logger.Info(fmt.Sprintf("Container %s post_start hook failed: %v", c.ID[:12], err))
+					if eo, ok := err.(*ErrorWithOutput); ok {
+						lines := strings.Split(eo.Output, "\n")
+						for _, line := range lines {
+							input.Logger.Info(fmt.Sprintf("    %s", line))
+						}
+					}
+
+					mu.Lock()
+					failures++
+					if batchErr == nil {
+						batchErr = fmt.Errorf("container %s post_start hook failed: %v", c.ID[:12], err)
+					}
+					mu.Unlock()
+
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Executor:    executor,
+						ServiceName: input.ServiceName,
+						Script:      input.PreStopHostCommand,
+						ScriptType:  "pre-stop",
+						Detached:    input.PreStopHostCommandDetached,
+					})
+					if input.PreStopCommand != "" {
+						_ = runContainerScript(ctx, RunContainerScriptInput{
+							Client:      input.Client,
+							ContainerID: c.ID,
+							Script:      input.PreStopCommand,
+							ScriptPath:  "/tmp/pre-stop.sh",
+							ServiceName: input.ServiceName,
+						})
+					}
+					_ = runContainerHooks(ctx, RunContainerHooksInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Hooks:       input.PreStopHooks,
+						ServiceName: input.ServiceName,
+					})
+					_ = input.Client.ContainerTerminate(ctx, c.ID, input.StopTimeout)
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Executor:    executor,
+						ServiceName: input.ServiceName,
+						Script:      input.PostStopHostCommand,
+						ScriptType:  "post-stop",
+						Detached:    input.PostStopHostCommandDetached,
+					})
 					return
 				}
 

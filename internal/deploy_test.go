@@ -1364,6 +1364,112 @@ func TestDeployServicePreStopHooks(t *testing.T) {
 	})
 }
 
+func TestDeployServicePostStartHooks(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("post_start hooks are threaded through to scale-up", func(t *testing.T) {
+		var hookCmds []string
+		callCount := 0
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				// Calls 1-5: all containers check, rename, currentContainers, containersToUpdate, updatedContainers
+				// All return empty to force scale-up path (0 existing → 1 desired)
+				if callCount <= 5 {
+					return []container.Summary{}, nil
+				}
+				// Call 6+: after docker compose create and final count - return the new container
+				return []container.Summary{
+					{ID: "new1_container_id_long", Names: []string{"/new1"}, State: "running", Created: 100},
+				}, nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				return nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: true},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				hookCmds = append(hookCmds, strings.Join(config.Cmd, " "))
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					PostStart: []types.ServiceHook{
+						{Command: types.ShellCommand{"sh", "-c", "echo started"}},
+					},
+					Deploy: &types.DeployConfig{
+						Replicas: intPtr(1),
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism: &parallelism,
+							Order:       "start-first",
+						},
+					},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFile:           "/tmp/docker-compose.yaml",
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		_ = DeployService(context.Background(), input)
+
+		// Verify the post_start hook was executed during the scale-up path
+		found := false
+		for _, cmd := range hookCmds {
+			if cmd == "sh -c echo started" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected hook command 'sh -c echo started' to be executed, got %v", hookCmds)
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }

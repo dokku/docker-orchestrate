@@ -293,6 +293,44 @@ Each hook in the `pre_stop` list is executed sequentially via Docker exec. The f
 
 Hooks run synchronously and errors are logged but do not block container stop. If a hook fails, subsequent hooks in the list are skipped.
 
+#### Compose Spec Post-Start Hooks
+
+`docker-orchestrate` supports the compose spec `post_start` lifecycle hooks. These hooks are executed inside the container after it starts, before healthchecks are evaluated. In the rolling update path (`docker compose up`), post_start hooks are handled automatically by the compose CLI. In the scale-up path, `docker-orchestrate` executes them explicitly via Docker exec.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    post_start:
+      - command: ["sh", "-c", "echo 'Container started'"]
+      - command: ["sh", "-c", "/app/setup.sh"]
+        user: appuser
+        working_dir: /app
+        environment:
+          INIT_MODE: "true"
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+```
+
+Each hook in the `post_start` list is executed sequentially via Docker exec after the container starts. The same fields as `pre_stop` hooks are supported: `command`, `user`, `privileged`, `working_dir`, and `environment`.
+
+If a post_start hook fails, the container is treated as failed: the pre-stop cleanup sequence is executed and the container is terminated, similar to a healthcheck failure.
+
+**Full container lifecycle order** (scale-up path):
+
+1. Container start
+2. Compose spec `post_start` hooks (commands inside the container)
+3. Docker healthcheck + `x-healthcheck-host-command`
+4. _...service runs..._
+5. `x-pre-stop-host-command` (on the host)
+6. `x-pre-stop-command` (script inside the container)
+7. Compose spec `pre_stop` hooks (commands inside the container)
+8. Container stop + remove
+9. `x-post-stop-host-command` (on the host)
+
 #### Detached Execution
 
 By default, stop commands run synchronously and `docker-orchestrate` waits for them to complete before proceeding. You can configure commands to run in detached mode using `x-pre-stop-host-command-detached` and `x-post-stop-host-command-detached`. When set to `true`, the command runs asynchronously and will continue executing even if `docker-orchestrate` exits.

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -1066,6 +1067,299 @@ func TestScaleUpContainers(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "max failure ratio exceeded") {
 			t.Errorf("expected error to contain 'max failure ratio exceeded', got '%s'", err.Error())
+		}
+	})
+}
+
+func TestPostStartHooksInScaleUp(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("post_start hooks execute after container start and before healthcheck", func(t *testing.T) {
+		var mu sync.Mutex
+		var operations []string
+
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "new1_container_id", Names: []string{"/new1"}},
+				}, nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				mu.Lock()
+				operations = append(operations, "start")
+				mu.Unlock()
+				return nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				mu.Lock()
+				operations = append(operations, "healthcheck")
+				mu.Unlock()
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: true},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				mu.Lock()
+				operations = append(operations, "hook:"+strings.Join(config.Cmd, " "))
+				mu.Unlock()
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := ScaleUpContainersInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			DesiredReplicas:    1,
+			Parallelism:        1,
+			ExistingContainers: []container.Summary{},
+			PostStartHooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"sh", "-c", "echo setup1"}},
+				{Command: composeTypes.ShellCommand{"sh", "-c", "echo setup2"}},
+			},
+			StopTimeout: 10,
+			TickerCh:    testTickerCh(),
+		}
+
+		err := scaleUpContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Expected order: start, hook:sh -c echo setup1, hook:sh -c echo setup2, healthcheck
+		expectedOps := []string{
+			"start",
+			"hook:sh -c echo setup1",
+			"hook:sh -c echo setup2",
+			"healthcheck",
+		}
+		if len(operations) != len(expectedOps) {
+			t.Fatalf("expected %d operations, got %d: %v", len(expectedOps), len(operations), operations)
+		}
+		for i := range expectedOps {
+			if operations[i] != expectedOps[i] {
+				t.Errorf("operation[%d]: expected %q, got %q", i, expectedOps[i], operations[i])
+			}
+		}
+	})
+
+	t.Run("post_start hook failure triggers cleanup and terminate", func(t *testing.T) {
+		var mu sync.Mutex
+		var operations []string
+
+		// Track which exec IDs correspond to which hook types
+		execCounter := 0
+		postStartExecID := ""
+
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "new1_container_id", Names: []string{"/new1"}},
+				}, nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				mu.Lock()
+				operations = append(operations, "start")
+				mu.Unlock()
+				return nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+						State: &container.State{Running: true},
+					},
+					Config: &container.Config{
+						Shell: []string{"/bin/sh"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				mu.Lock()
+				execCounter++
+				currentExecID := fmt.Sprintf("exec-%d", execCounter)
+				isScript := false
+				for _, c := range config.Cmd {
+					if strings.Contains(c, "pre-stop.sh") {
+						isScript = true
+						break
+					}
+				}
+				if isScript {
+					operations = append(operations, "pre-stop-command")
+				} else {
+					hookLabel := "hook:" + strings.Join(config.Cmd, " ")
+					operations = append(operations, hookLabel)
+					if strings.Contains(strings.Join(config.Cmd, " "), "fail") {
+						postStartExecID = currentExecID
+					}
+				}
+				mu.Unlock()
+				return container.ExecCreateResponse{ID: currentExecID}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				mu.Lock()
+				isPostStart := execID == postStartExecID
+				mu.Unlock()
+				if isPostStart {
+					return container.ExecInspect{ExitCode: 1}, nil
+				}
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				mu.Lock()
+				operations = append(operations, "terminate")
+				mu.Unlock()
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			mu.Lock()
+			// Only track host script commands, not docker compose create
+			if input.Command != "docker" {
+				operations = append(operations, "host-command")
+			}
+			mu.Unlock()
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := ScaleUpContainersInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			DesiredReplicas:    1,
+			Parallelism:        1,
+			ExistingContainers: []container.Summary{},
+			PostStartHooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"sh", "-c", "fail"}},
+			},
+			PreStopHostCommand: "echo stopping",
+			PreStopCommand:     "#!/bin/sh\necho bye",
+			PreStopHooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"echo", "cleanup"}},
+			},
+			PostStopHostCommand: "echo stopped",
+			StopTimeout:         10,
+			TickerCh:            testTickerCh(),
+		}
+
+		err := scaleUpContainers(ctx, input)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "post_start hook failed") {
+			t.Errorf("expected error to contain 'post_start hook failed', got '%s'", err.Error())
+		}
+
+		// Expected order: start, hook:sh -c fail (fails), host-command (pre-stop host), pre-stop-command, hook:echo cleanup (pre-stop hook), terminate, host-command (post-stop host)
+		// No healthcheck operation should appear in the list
+		expectedOps := []string{
+			"start",
+			"hook:sh -c fail",
+			"host-command",
+			"pre-stop-command",
+			"hook:echo cleanup",
+			"terminate",
+			"host-command",
+		}
+		if len(operations) != len(expectedOps) {
+			t.Fatalf("expected %d operations, got %d: %v", len(expectedOps), len(operations), operations)
+		}
+		for i := range expectedOps {
+			if operations[i] != expectedOps[i] {
+				t.Errorf("operation[%d]: expected %q, got %q", i, expectedOps[i], operations[i])
+			}
+		}
+	})
+
+	t.Run("empty post_start hooks are skipped", func(t *testing.T) {
+		execCalled := false
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "new1_container_id", Names: []string{"/new1"}},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: true},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				execCalled = true
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := ScaleUpContainersInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			DesiredReplicas:    1,
+			Parallelism:        1,
+			ExistingContainers: []container.Summary{},
+			PostStartHooks:     nil,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		err := scaleUpContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if execCalled {
+			t.Error("expected no exec calls for empty post_start hooks")
 		}
 	})
 }
