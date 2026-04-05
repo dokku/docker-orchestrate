@@ -1,0 +1,4 @@
+services:
+  web:
+    environment:
+      OVERRIDE_APPLIED: "true"

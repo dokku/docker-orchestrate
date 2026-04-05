@@ -46,9 +46,9 @@ func ComposeFile() (string, error) {
 	return "", errors.New("no compose file found")
 }
 
-// ComposeProject reads the compose file specified by the filename
+// ComposeProject reads the compose files specified by the filenames
 // and returns the compose types.Project
-func ComposeProject(ctx context.Context, projectName string, filename string, profiles []string) (*types.Project, error) {
+func ComposeProject(ctx context.Context, projectName string, filenames []string, profiles []string) (*types.Project, error) {
 	opts := []cli.ProjectOptionsFn{
 		cli.WithOsEnv,
 		cli.WithDotEnv,
@@ -56,7 +56,7 @@ func ComposeProject(ctx context.Context, projectName string, filename string, pr
 		cli.WithName(projectName),
 	}
 
-	options, err := cli.NewProjectOptions([]string{filename}, opts...)
+	options, err := cli.NewProjectOptions(filenames, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating project options: %v", err)
 	}
@@ -67,6 +67,16 @@ func ComposeProject(ctx context.Context, projectName string, filename string, pr
 	}
 
 	return project, nil
+}
+
+// composeFileArgs returns the command-line arguments for specifying
+// one or more compose files to docker compose (e.g., ["-f", "a.yml", "-f", "b.yml"]).
+func composeFileArgs(files []string) []string {
+	args := make([]string, 0, len(files)*2)
+	for _, f := range files {
+		args = append(args, "-f", f)
+	}
+	return args
 }
 
 // ComposeContainersInput is the input for the ComposeContainers function
@@ -109,8 +119,8 @@ func composeContainers(ctx context.Context, input ComposeContainersInput) ([]con
 type RollingUpdateInput struct {
 	// Client is the Docker client to use. If nil, a new one will be created.
 	Client DockerClientInterface
-	// ComposeFile is the path to the compose file
-	ComposeFile string
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
 	// ContainersToUpdate is the list of containers to update
 	ContainersToUpdate []container.Summary
 	// CurrentReplicas is the current number of replicas
@@ -230,19 +240,14 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 
 	// Start new containers
 	newScale := len(currentContainers) + len(batch)
+	args := []string{"compose"}
+	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, "-p", input.ProjectName, "up", "--detach",
+		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, newScale),
+		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
-		Command: "docker",
-		Args: []string{
-			"compose",
-			"-f", input.ComposeFile,
-			"-p", input.ProjectName,
-			"up",
-			"--detach",
-			"--scale", fmt.Sprintf("%s=%d", input.ServiceName, newScale),
-			"--no-deps",
-			"--no-recreate",
-			input.ServiceName,
-		},
+		Command:          "docker",
+		Args:             args,
 		WorkingDirectory: input.ProjectDir,
 	})
 	if err != nil {
@@ -518,19 +523,14 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 
 	// Start new containers
 	targetScale := len(currentContainers) + len(batch)
+	args := []string{"compose"}
+	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, "-p", input.ProjectName, "up", "--detach",
+		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, targetScale),
+		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
-		Command: "docker",
-		Args: []string{
-			"compose",
-			"-f", input.ComposeFile,
-			"-p", input.ProjectName,
-			"up",
-			"--detach",
-			"--scale", fmt.Sprintf("%s=%d", input.ServiceName, targetScale),
-			"--no-deps",
-			"--no-recreate",
-			input.ServiceName,
-		},
+		Command:          "docker",
+		Args:             args,
 		WorkingDirectory: input.ProjectDir,
 	})
 	if err != nil {
@@ -648,8 +648,8 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 type ScaleDownContainersInput struct {
 	// Client is the Docker client to use. If nil, a new one will be created.
 	Client DockerClientInterface
-	// ComposeFile is the path to the compose file
-	ComposeFile string
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
 	// CurrentContainers is the current list of containers
 	CurrentContainers []container.Summary
 	// CurrentReplicas is the current number of containers
@@ -774,8 +774,8 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 type ScaleUpContainersInput struct {
 	// Client is the Docker client to use. If nil, a new one will be created.
 	Client DockerClientInterface
-	// ComposeFile is the path to the compose file
-	ComposeFile string
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
 	// CurrentReplicas is the current number of containers
 	CurrentReplicas int
 	// Delay is the delay between batches
@@ -834,16 +834,14 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	}
 
 	// Create all containers at once
+	args := []string{"compose"}
+	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, "-p", input.ProjectName, "create",
+		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, input.DesiredReplicas),
+		input.ServiceName)
 	_, err := executor(ctx, ExecCommandInput{
-		Command: "docker",
-		Args: []string{
-			"compose",
-			"-f", input.ComposeFile,
-			"-p", input.ProjectName,
-			"create",
-			"--scale", fmt.Sprintf("%s=%d", input.ServiceName, input.DesiredReplicas),
-			input.ServiceName,
-		},
+		Command:          "docker",
+		Args:             args,
 		WorkingDirectory: input.ProjectDir,
 	})
 	if err != nil {

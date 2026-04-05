@@ -19,8 +19,8 @@ import (
 type DeployProjectInput struct {
 	// Client is the Docker client to use
 	Client DockerClientInterface
-	// ComposeFile is the path to the compose file
-	ComposeFile string
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
 	// Executor is the command executor to use
@@ -46,7 +46,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 		err = DeployService(ctx, DeployServiceInput{
 			Client:                input.Client,
-			ComposeFile:           input.ComposeFile,
+			ComposeFiles:          input.ComposeFiles,
 			ContainerNameTemplate: input.ContainerNameTemplate,
 			Executor:              input.Executor,
 			Logger:                input.Logger,
@@ -100,7 +100,7 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 		input.Logger.LogHeader2(fmt.Sprintf("Removing service %s", serviceName))
 		err = scaleDownContainers(ctx, ScaleDownContainersInput{
 			Client:                      input.Client,
-			ComposeFile:                 input.ComposeFile,
+			ComposeFiles:                input.ComposeFiles,
 			CurrentContainers:           currentContainers,
 			CurrentReplicas:             len(currentContainers),
 			DesiredReplicas:             0,
@@ -129,8 +129,8 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 type DeployServiceInput struct {
 	// Client is the Docker client to use
 	Client DockerClientInterface
-	// ComposeFile is the path to the compose file
-	ComposeFile string
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
 	// Executor is the command executor to use
@@ -151,7 +151,7 @@ type DeployServiceInput struct {
 
 // DeployService deploys a single service
 func DeployService(ctx context.Context, input DeployServiceInput) error {
-	if input.ComposeFile == "" {
+	if len(input.ComposeFiles) == 0 {
 		return fmt.Errorf("compose file is required")
 	}
 
@@ -273,7 +273,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	preStopHooks := service.PreStop
 	postStartHooks := service.PostStart
 
-	projectDir := filepath.Dir(input.ComposeFile)
+	projectDir := filepath.Dir(input.ComposeFiles[0])
 
 	executor := input.Executor
 	if executor == nil {
@@ -344,7 +344,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if len(currentContainers) > replicas {
 		err := scaleDownContainers(ctx, ScaleDownContainersInput{
 			Client:                      input.Client,
-			ComposeFile:                 input.ComposeFile,
+			ComposeFiles:                input.ComposeFiles,
 			CurrentContainers:           currentContainers,
 			CurrentReplicas:             len(currentContainers),
 			DesiredReplicas:             replicas,
@@ -388,7 +388,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if len(containersToUpdate) > 0 {
 		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
 			Client:                      input.Client,
-			ComposeFile:                 input.ComposeFile,
+			ComposeFiles:                input.ComposeFiles,
 			ContainersToUpdate:          containersToUpdate,
 			CurrentReplicas:             len(containersToUpdate),
 			Delay:                       delay,
@@ -432,7 +432,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if len(updatedContainers) < replicas {
 		err := scaleUpContainers(ctx, ScaleUpContainersInput{
 			Client:                      input.Client,
-			ComposeFile:                 input.ComposeFile,
+			ComposeFiles:                input.ComposeFiles,
 			CurrentReplicas:             len(updatedContainers),
 			Delay:                       delay,
 			DesiredReplicas:             replicas,
