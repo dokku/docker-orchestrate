@@ -1,0 +1,5 @@
+services:
+  web:
+    image: nginx:latest
+    environment:
+      FROM_ENV_FILE: "${MY_ENV_FILE_VAR}"

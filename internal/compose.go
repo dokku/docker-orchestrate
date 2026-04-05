@@ -48,9 +48,10 @@ func ComposeFile() (string, error) {
 
 // ComposeProject reads the compose files specified by the filenames
 // and returns the compose types.Project
-func ComposeProject(ctx context.Context, projectName string, filenames []string, profiles []string) (*types.Project, error) {
+func ComposeProject(ctx context.Context, projectName string, filenames []string, profiles []string, envFiles []string) (*types.Project, error) {
 	opts := []cli.ProjectOptionsFn{
 		cli.WithOsEnv,
+		cli.WithEnvFiles(envFiles...),
 		cli.WithDotEnv,
 		cli.WithDefaultProfiles(profiles...),
 		cli.WithName(projectName),
@@ -75,6 +76,16 @@ func composeFileArgs(files []string) []string {
 	args := make([]string, 0, len(files)*2)
 	for _, f := range files {
 		args = append(args, "-f", f)
+	}
+	return args
+}
+
+// envFileArgs returns the command-line arguments for specifying
+// one or more env files to docker compose (e.g., ["--env-file", "a.env", "--env-file", "b.env"]).
+func envFileArgs(files []string) []string {
+	args := make([]string, 0, len(files)*2)
+	for _, f := range files {
+		args = append(args, "--env-file", f)
 	}
 	return args
 }
@@ -123,6 +134,10 @@ type RollingUpdateInput struct {
 	ComposeFiles []string
 	// ContainersToUpdate is the list of containers to update
 	ContainersToUpdate []container.Summary
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// EnvVars is the parsed environment variables from env files
+	EnvVars map[string]string
 	// CurrentReplicas is the current number of replicas
 	CurrentReplicas int
 	// Delay is the delay between batches
@@ -242,6 +257,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 	newScale := len(currentContainers) + len(batch)
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach",
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, newScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
@@ -334,17 +350,19 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
+					Detached:    input.PreStopHostCommandDetached,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
-					Detached:    input.PreStopHostCommandDetached,
+					ServiceName: input.ServiceName,
 				})
 				// Run pre-stop command inside container if specified
 				if input.PreStopCommand != "" {
 					_ = runContainerScript(ctx, RunContainerScriptInput{
 						Client:      input.Client,
 						ContainerID: newContainer.ID,
+						Env:         input.EnvVars,
 						Script:      input.PreStopCommand,
 						ScriptPath:  "/tmp/pre-stop.sh",
 						ServiceName: input.ServiceName,
@@ -361,11 +379,12 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
+					Detached:    input.PostStopHostCommandDetached,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PostStopHostCommand,
 					ScriptType:  "post-stop",
-					Detached:    input.PostStopHostCommandDetached,
+					ServiceName: input.ServiceName,
 				})
 
 				// We don't return error here because we want to continue with others in batch
@@ -389,17 +408,19 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: oldContainer.ID,
+					Detached:    input.PreStopHostCommandDetached,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
-					Detached:    input.PreStopHostCommandDetached,
+					ServiceName: input.ServiceName,
 				})
 				// Run pre-stop command inside container if specified
 				if input.PreStopCommand != "" {
 					_ = runContainerScript(ctx, RunContainerScriptInput{
 						Client:      input.Client,
 						ContainerID: oldContainer.ID,
+						Env:         input.EnvVars,
 						Script:      input.PreStopCommand,
 						ScriptPath:  "/tmp/pre-stop.sh",
 						ServiceName: input.ServiceName,
@@ -418,11 +439,12 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: oldContainer.ID,
+					Detached:    input.PostStopHostCommandDetached,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PostStopHostCommand,
 					ScriptType:  "post-stop",
-					Detached:    input.PostStopHostCommandDetached,
+					ServiceName: input.ServiceName,
 				})
 			} else {
 				input.Logger.Info(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
@@ -468,17 +490,19 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
+				Detached:    input.PreStopHostCommandDetached,
+				Env:         input.EnvVars,
 				Executor:    input.Executor,
-				ServiceName: input.ServiceName,
 				Script:      input.PreStopHostCommand,
 				ScriptType:  "pre-stop",
-				Detached:    input.PreStopHostCommandDetached,
+				ServiceName: input.ServiceName,
 			})
 			// Run pre-stop command inside container if specified
 			if input.PreStopCommand != "" {
 				_ = runContainerScript(ctx, RunContainerScriptInput{
 					Client:      input.Client,
 					ContainerID: containerID,
+					Env:         input.EnvVars,
 					Script:      input.PreStopCommand,
 					ScriptPath:  "/tmp/pre-stop.sh",
 					ServiceName: input.ServiceName,
@@ -495,11 +519,12 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
+				Detached:    input.PostStopHostCommandDetached,
+				Env:         input.EnvVars,
 				Executor:    input.Executor,
-				ServiceName: input.ServiceName,
 				Script:      input.PostStopHostCommand,
 				ScriptType:  "post-stop",
-				Detached:    input.PostStopHostCommandDetached,
+				ServiceName: input.ServiceName,
 			})
 			return err
 		})
@@ -525,6 +550,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	targetScale := len(currentContainers) + len(batch)
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach",
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, targetScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
@@ -606,19 +632,21 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
+					ServiceName: input.ServiceName,
 				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID, input.StopTimeout)
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
+					Env:         input.EnvVars,
 					Executor:    input.Executor,
-					ServiceName: input.ServiceName,
 					Script:      input.PostStopHostCommand,
 					ScriptType:  "post-stop",
+					ServiceName: input.ServiceName,
 				})
 				return
 			}
@@ -652,6 +680,10 @@ type ScaleDownContainersInput struct {
 	ComposeFiles []string
 	// CurrentContainers is the current list of containers
 	CurrentContainers []container.Summary
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// EnvVars is the parsed environment variables from env files
+	EnvVars map[string]string
 	// CurrentReplicas is the current number of containers
 	CurrentReplicas int
 	// DesiredReplicas is the target number of replicas
@@ -730,17 +762,19 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 		_ = runHostScript(ctx, runScriptInput{
 			Client:      input.Client,
 			ContainerID: container.ID,
+			Detached:    input.PreStopHostCommandDetached,
+			Env:         input.EnvVars,
 			Executor:    executor,
-			ServiceName: input.ServiceName,
 			Script:      input.PreStopHostCommand,
 			ScriptType:  "pre-stop",
-			Detached:    input.PreStopHostCommandDetached,
+			ServiceName: input.ServiceName,
 		})
 		// Run pre-stop command inside container if specified
 		if input.PreStopCommand != "" {
 			_ = runContainerScript(ctx, RunContainerScriptInput{
 				Client:      input.Client,
 				ContainerID: container.ID,
+				Env:         input.EnvVars,
 				Script:      input.PreStopCommand,
 				ScriptPath:  "/tmp/pre-stop.sh",
 				ServiceName: input.ServiceName,
@@ -759,11 +793,12 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 		_ = runHostScript(ctx, runScriptInput{
 			Client:      input.Client,
 			ContainerID: container.ID,
+			Detached:    input.PostStopHostCommandDetached,
+			Env:         input.EnvVars,
 			Executor:    executor,
-			ServiceName: input.ServiceName,
 			Script:      input.PostStopHostCommand,
 			ScriptType:  "post-stop",
-			Detached:    input.PostStopHostCommandDetached,
+			ServiceName: input.ServiceName,
 		})
 	}
 
@@ -778,6 +813,10 @@ type ScaleUpContainersInput struct {
 	ComposeFiles []string
 	// CurrentReplicas is the current number of containers
 	CurrentReplicas int
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// EnvVars is the parsed environment variables from env files
+	EnvVars map[string]string
 	// Delay is the delay between batches
 	Delay time.Duration
 	// DesiredReplicas is the target number of replicas
@@ -836,6 +875,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	// Create all containers at once
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
+	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "create",
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, input.DesiredReplicas),
 		input.ServiceName)
@@ -937,16 +977,18 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
+						Detached:    input.PreStopHostCommandDetached,
+						Env:         input.EnvVars,
 						Executor:    executor,
-						ServiceName: input.ServiceName,
 						Script:      input.PreStopHostCommand,
 						ScriptType:  "pre-stop",
-						Detached:    input.PreStopHostCommandDetached,
+						ServiceName: input.ServiceName,
 					})
 					if input.PreStopCommand != "" {
 						_ = runContainerScript(ctx, RunContainerScriptInput{
 							Client:      input.Client,
 							ContainerID: c.ID,
+							Env:         input.EnvVars,
 							Script:      input.PreStopCommand,
 							ScriptPath:  "/tmp/pre-stop.sh",
 							ServiceName: input.ServiceName,
@@ -962,11 +1004,12 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
+						Detached:    input.PostStopHostCommandDetached,
+						Env:         input.EnvVars,
 						Executor:    executor,
-						ServiceName: input.ServiceName,
 						Script:      input.PostStopHostCommand,
 						ScriptType:  "post-stop",
-						Detached:    input.PostStopHostCommandDetached,
+						ServiceName: input.ServiceName,
 					})
 					return
 				}
@@ -1002,17 +1045,19 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
+						Detached:    input.PreStopHostCommandDetached,
+						Env:         input.EnvVars,
 						Executor:    executor,
-						ServiceName: input.ServiceName,
 						Script:      input.PreStopHostCommand,
 						ScriptType:  "pre-stop",
-						Detached:    input.PreStopHostCommandDetached,
+						ServiceName: input.ServiceName,
 					})
 					// Run pre-stop command inside container if specified
 					if input.PreStopCommand != "" {
 						_ = runContainerScript(ctx, RunContainerScriptInput{
 							Client:      input.Client,
 							ContainerID: c.ID,
+							Env:         input.EnvVars,
 							Script:      input.PreStopCommand,
 							ScriptPath:  "/tmp/pre-stop.sh",
 							ServiceName: input.ServiceName,
@@ -1029,11 +1074,12 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
+						Detached:    input.PostStopHostCommandDetached,
+						Env:         input.EnvVars,
 						Executor:    executor,
-						ServiceName: input.ServiceName,
 						Script:      input.PostStopHostCommand,
 						ScriptType:  "post-stop",
-						Detached:    input.PostStopHostCommandDetached,
+						ServiceName: input.ServiceName,
 					})
 				}
 			}(c)

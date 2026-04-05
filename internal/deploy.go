@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -23,6 +24,10 @@ type DeployProjectInput struct {
 	ComposeFiles []string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// EnvVars is the parsed environment variables from env files
+	EnvVars map[string]string
 	// Executor is the command executor to use
 	Executor CommandExecutor
 	// Logger is the logger to use
@@ -48,6 +53,8 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 			Client:                input.Client,
 			ComposeFiles:          input.ComposeFiles,
 			ContainerNameTemplate: input.ContainerNameTemplate,
+			EnvFiles:              input.EnvFiles,
+			EnvVars:               input.EnvVars,
 			Executor:              input.Executor,
 			Logger:                input.Logger,
 			Project:               input.Project,
@@ -104,6 +111,8 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 			CurrentContainers:           currentContainers,
 			CurrentReplicas:             len(currentContainers),
 			DesiredReplicas:             0,
+			EnvFiles:                    input.EnvFiles,
+			EnvVars:                     input.EnvVars,
 			Executor:                    input.Executor,
 			Logger:                      input.Logger,
 			PostStopHostCommand:         "",
@@ -133,6 +142,10 @@ type DeployServiceInput struct {
 	ComposeFiles []string
 	// ContainerNameTemplate is the Go template for container names
 	ContainerNameTemplate string
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// EnvVars is the parsed environment variables from env files
+	EnvVars map[string]string
 	// Executor is the command executor to use
 	Executor CommandExecutor
 	// Logger is the logger to use
@@ -348,6 +361,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			CurrentContainers:           currentContainers,
 			CurrentReplicas:             len(currentContainers),
 			DesiredReplicas:             replicas,
+			EnvFiles:                    input.EnvFiles,
+			EnvVars:                     input.EnvVars,
 			Executor:                    executor,
 			Logger:                      input.Logger,
 			PostStopHostCommand:         postStopHostCommand,
@@ -393,6 +408,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			CurrentReplicas:             len(containersToUpdate),
 			Delay:                       delay,
 			DesiredReplicas:             replicas,
+			EnvFiles:                    input.EnvFiles,
+			EnvVars:                     input.EnvVars,
 			Executor:                    executor,
 			FailureAction:               updateConfig.FailureAction,
 			HealthcheckCommand:          healthcheckHostCommand,
@@ -436,6 +453,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			CurrentReplicas:             len(updatedContainers),
 			Delay:                       delay,
 			DesiredReplicas:             replicas,
+			EnvFiles:                    input.EnvFiles,
+			EnvVars:                     input.EnvVars,
 			Executor:                    executor,
 			ExistingContainers:          updatedContainers,
 			FailureAction:               string(updateConfig.FailureAction),
@@ -510,6 +529,7 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	if hasWeb && skipWeb {
 		dependencyOrder = append(dependencyOrder, "web")
 	}
+	var mu sync.Mutex
 	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
 		if name == "web" && skipWeb {
 			return nil
@@ -519,7 +539,9 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 		if err != nil {
 			return err
 		}
+		mu.Lock()
 		dependencyOrder = append(dependencyOrder, service.Name)
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {

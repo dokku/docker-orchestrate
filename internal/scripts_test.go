@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -1312,4 +1313,132 @@ func TestRunContainerHooks(t *testing.T) {
 			t.Errorf("expected 2 exec calls (first succeeds, second fails), got %d", execCount)
 		}
 	})
+}
+
+func TestRunHostScriptWithEnv(t *testing.T) {
+	ctx := context.Background()
+
+	mockClient := &mockDockerClient{
+		containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+			return container.InspectResponse{
+				ContainerJSONBase: &container.ContainerJSONBase{
+					ID: id,
+				},
+				NetworkSettings: &container.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"bridge": {IPAddress: "172.17.0.2"},
+					},
+				},
+			}, nil
+		},
+	}
+
+	var capturedEnv map[string]string
+	executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		capturedEnv = input.Env
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	envVars := map[string]string{
+		"DB_HOST": "localhost",
+		"DB_PORT": "5432",
+	}
+
+	input := runScriptInput{
+		Client:      mockClient,
+		ContainerID: "test-container-id-long-enough",
+		Env:         envVars,
+		Executor:    executor,
+		ServiceName: "test-service",
+		Script:      "echo hello",
+		ScriptType:  "test-script",
+	}
+
+	err := runHostScript(ctx, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if capturedEnv == nil {
+		t.Fatal("expected env to be passed to executor")
+	}
+	if capturedEnv["DB_HOST"] != "localhost" {
+		t.Errorf("expected DB_HOST=localhost, got %q", capturedEnv["DB_HOST"])
+	}
+	if capturedEnv["DB_PORT"] != "5432" {
+		t.Errorf("expected DB_PORT=5432, got %q", capturedEnv["DB_PORT"])
+	}
+}
+
+func TestRunContainerScriptWithEnv(t *testing.T) {
+	ctx := context.Background()
+
+	var capturedExecEnv []string
+	mockClient := &mockDockerClient{
+		containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+			return container.InspectResponse{
+				ContainerJSONBase: &container.ContainerJSONBase{
+					ID: id,
+				},
+				Config: &container.Config{},
+			}, nil
+		},
+		imageInspect: func(ctx context.Context, id string) (image.InspectResponse, error) {
+			return image.InspectResponse{
+				Config: &dockerspec.DockerOCIImageConfig{},
+			}, nil
+		},
+		copyToContainer: func(ctx context.Context, containerID, path string, content io.Reader, options container.CopyToContainerOptions) error {
+			return nil
+		},
+		containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+			capturedExecEnv = config.Env
+			return container.ExecCreateResponse{ID: "exec-id"}, nil
+		},
+		containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+			reader := strings.NewReader("")
+			return types.HijackedResponse{
+				Conn:   &mockConn{},
+				Reader: bufio.NewReader(reader),
+			}, nil
+		},
+		containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+			return nil
+		},
+		containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+			return container.ExecInspect{ExitCode: 0}, nil
+		},
+	}
+
+	envVars := map[string]string{
+		"APP_ENV": "production",
+	}
+
+	input := RunContainerScriptInput{
+		Client:      mockClient,
+		ContainerID: "test-container-id-long-enough",
+		Env:         envVars,
+		Script:      "echo hello",
+		ScriptPath:  "/tmp/test.sh",
+		ServiceName: "test-service",
+	}
+
+	err := runContainerScript(ctx, input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(capturedExecEnv) == 0 {
+		t.Fatal("expected env to be passed to container exec")
+	}
+	found := false
+	for _, env := range capturedExecEnv {
+		if env == "APP_ENV=production" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected APP_ENV=production in exec env, got %v", capturedExecEnv)
+	}
 }
