@@ -1,0 +1,4 @@
+services:
+  web:
+    image: nginx:latest
+    pull_policy: always

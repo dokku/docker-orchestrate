@@ -164,6 +164,8 @@ type RollingUpdateInput struct {
 	ProjectDir string
 	// ProjectName is the name of the project
 	ProjectName string
+	// PullPolicy is the pull policy to pass to docker compose (always, missing, never)
+	PullPolicy string
 	// ServiceName is the name of the service
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
@@ -259,6 +261,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach",
+		"--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, newScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
@@ -552,6 +555,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach",
+		"--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, targetScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
@@ -843,6 +847,8 @@ type ScaleUpContainersInput struct {
 	ProjectDir string
 	// ProjectName is the name of the project
 	ProjectName string
+	// PullPolicy is the pull policy to pass to docker compose (always, missing, never)
+	PullPolicy string
 	// ServiceName is the name of the service
 	ServiceName string
 	// PreStopHostCommand is the command to run before stopping a container (on host)
@@ -877,6 +883,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "create",
+		"--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, input.DesiredReplicas),
 		input.ServiceName)
 	_, err := executor(ctx, ExecCommandInput{
