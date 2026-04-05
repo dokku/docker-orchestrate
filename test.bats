@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -577,6 +577,34 @@ teardown() {
 
   # Verify container is running
   run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-ifnp" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "pull policy build from compose spec builds and deploys" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy-build"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy-build web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-build" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "build CLI flag builds and deploys" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy-build"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy-build --build --pull never web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-build" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
 }

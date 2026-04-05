@@ -128,6 +128,8 @@ func composeContainers(ctx context.Context, input ComposeContainersInput) ([]con
 
 // RollingUpdateInput contains the parameters for rolling update
 type RollingUpdateInput struct {
+	// Build is whether to build images before deploying
+	Build bool
 	// Client is the Docker client to use. If nil, a new one will be created.
 	Client DockerClientInterface
 	// ComposeFiles is the list of paths to the compose files
@@ -260,8 +262,11 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
-	args = append(args, "-p", input.ProjectName, "up", "--detach",
-		"--pull", input.PullPolicy,
+	args = append(args, "-p", input.ProjectName, "up", "--detach")
+	if input.Build {
+		args = append(args, "--build")
+	}
+	args = append(args, "--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, newScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
@@ -554,8 +559,11 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
-	args = append(args, "-p", input.ProjectName, "up", "--detach",
-		"--pull", input.PullPolicy,
+	args = append(args, "-p", input.ProjectName, "up", "--detach")
+	if input.Build {
+		args = append(args, "--build")
+	}
+	args = append(args, "--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, targetScale),
 		"--no-deps", "--no-recreate", input.ServiceName)
 	_, err = input.Executor(ctx, ExecCommandInput{
@@ -811,6 +819,8 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 
 // ScaleUpContainersInput is the input for the scaleUpContainers function
 type ScaleUpContainersInput struct {
+	// Build is whether to build images before deploying
+	Build bool
 	// Client is the Docker client to use. If nil, a new one will be created.
 	Client DockerClientInterface
 	// ComposeFiles is the list of paths to the compose files
@@ -882,8 +892,11 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 	args := []string{"compose"}
 	args = append(args, composeFileArgs(input.ComposeFiles)...)
 	args = append(args, envFileArgs(input.EnvFiles)...)
-	args = append(args, "-p", input.ProjectName, "create",
-		"--pull", input.PullPolicy,
+	args = append(args, "-p", input.ProjectName, "create")
+	if input.Build {
+		args = append(args, "--build")
+	}
+	args = append(args, "--pull", input.PullPolicy,
 		"--scale", fmt.Sprintf("%s=%d", input.ServiceName, input.DesiredReplicas),
 		input.ServiceName)
 	_, err := executor(ctx, ExecCommandInput{

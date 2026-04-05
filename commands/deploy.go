@@ -18,6 +18,7 @@ import (
 type DeployCommand struct {
 	command.Meta
 
+	build                 bool
 	containerNameTemplate string
 	envFiles              []string
 	files                 []string
@@ -70,6 +71,7 @@ func (c *DeployCommand) ParsedArguments(args []string) (map[string]command.Argum
 
 func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f := c.Meta.FlagSet(c.Name(), command.FlagSetClient)
+	f.BoolVar(&c.build, "build", false, "build images before deploying")
 	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
@@ -86,6 +88,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 	return command.MergeAutocompleteFlags(
 		c.Meta.AutocompleteFlags(command.FlagSetClient),
 		complete.Flags{
+			"--build":                   complete.PredictNothing,
 			"--container-name-template": complete.PredictAnything,
 			"--env-file":                complete.PredictFiles("*"),
 			"--file":                    complete.PredictFiles("*"),
@@ -176,6 +179,7 @@ func (c *DeployCommand) Run(args []string) int {
 
 		logger.LogHeader1(fmt.Sprintf("Deploying entire project from %s", strings.Join(c.files, ", ")))
 		err = internal.DeployProject(ctx, internal.DeployProjectInput{
+			Build:                 c.build,
 			Client:                client,
 			ComposeFiles:          c.files,
 			ContainerNameTemplate: c.containerNameTemplate,
@@ -197,6 +201,7 @@ func (c *DeployCommand) Run(args []string) int {
 
 	logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 	err = internal.DeployService(ctx, internal.DeployServiceInput{
+		Build:                 c.build,
 		Client:                client,
 		ComposeFiles:          c.files,
 		ContainerNameTemplate: c.containerNameTemplate,

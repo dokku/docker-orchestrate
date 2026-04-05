@@ -18,6 +18,8 @@ import (
 
 // DeployProjectInput is the input for the DeployProject function
 type DeployProjectInput struct {
+	// Build is whether to build images before deploying
+	Build bool
 	// Client is the Docker client to use
 	Client DockerClientInterface
 	// ComposeFiles is the list of paths to the compose files
@@ -52,6 +54,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 	for _, serviceName := range orderedServices {
 		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 		err = DeployService(ctx, DeployServiceInput{
+			Build:                 input.Build,
 			Client:                input.Client,
 			ComposeFiles:          input.ComposeFiles,
 			ContainerNameTemplate: input.ContainerNameTemplate,
@@ -139,6 +142,8 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 
 // DeployServiceInput is the input for the DeployService function
 type DeployServiceInput struct {
+	// Build is whether to build images before deploying
+	Build bool
 	// Client is the Docker client to use
 	Client DockerClientInterface
 	// ComposeFiles is the list of paths to the compose files
@@ -205,7 +210,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		return nil
 	}
 
-	pullPolicy, err := ResolvePullPolicy(input.PullPolicy, service)
+	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, service)
 	if err != nil {
 		return err
 	}
@@ -352,8 +357,25 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
-	// Pre-pull image when pull policy is "always" to avoid redundant pulls during each batch
-	if pullPolicy == "always" {
+	// Pre-build image when build flag is set
+	if buildImage {
+		input.Logger.Info(fmt.Sprintf("Building image for service %s", input.ServiceName))
+		buildArgs := []string{"compose"}
+		buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
+		buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
+		buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
+		_, err = executor(ctx, ExecCommandInput{
+			Command:          "docker",
+			Args:             buildArgs,
+			WorkingDirectory: projectDir,
+		})
+		if err != nil {
+			return fmt.Errorf("error building image for service %s: %v", input.ServiceName, err)
+		}
+	}
+
+	// Pre-pull image when pull policy is "always" and not building
+	if pullPolicy == "always" && !buildImage {
 		input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
 		pullArgs := []string{"compose"}
 		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
@@ -429,6 +451,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	var rollingUpdateOutput RollingUpdateOutput
 	if len(containersToUpdate) > 0 {
 		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
+			Build:                       buildImage,
 			Client:                      input.Client,
 			ComposeFiles:                input.ComposeFiles,
 			ContainersToUpdate:          containersToUpdate,
@@ -476,6 +499,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	// Scale up if needed (only after existing containers are replaced)
 	if len(updatedContainers) < replicas {
 		err := scaleUpContainers(ctx, ScaleUpContainersInput{
+			Build:                       buildImage,
 			Client:                      input.Client,
 			ComposeFiles:                input.ComposeFiles,
 			CurrentReplicas:             len(updatedContainers),
@@ -707,32 +731,46 @@ func isDatabaseService(serviceImage string, logger *command.ZerologUi) bool {
 	return false
 }
 
-// ResolvePullPolicy resolves the effective pull policy from the CLI flag and compose spec.
-// CLI flag takes precedence. If neither is set, defaults to "missing".
+// ResolvePullPolicy resolves the effective pull policy and build flag from CLI flags and compose spec.
+// CLI flags take precedence. If neither pull policy is set, defaults to "missing".
 // Compose spec "if_not_present" is mapped to "missing".
-// Compose spec "build" and "refresh" are not supported and return an error.
-func ResolvePullPolicy(cliPullPolicy string, service *types.ServiceConfig) (string, error) {
+// Compose spec "build" sets pull to "never" and build to true (requires a build section).
+// The --build CLI flag enables building for services that have a build section.
+func ResolvePullPolicy(cliPullPolicy string, cliBuild bool, service *types.ServiceConfig) (string, bool, error) {
+	build := false
+
+	// Resolve build flag
+	if service.PullPolicy == types.PullPolicyBuild {
+		if service.Build == nil {
+			return "", false, fmt.Errorf("pull_policy 'build' requires a build section in service %s", service.Name)
+		}
+		build = true
+	} else if cliBuild && service.Build != nil {
+		build = true
+	}
+
+	// Resolve pull policy
 	if cliPullPolicy != "" {
-		return cliPullPolicy, nil
+		return cliPullPolicy, build, nil
 	}
 
 	switch service.PullPolicy {
 	case "":
-		return "missing", nil
+		return "missing", build, nil
 	case types.PullPolicyAlways:
-		return "always", nil
+		return "always", build, nil
 	case types.PullPolicyNever:
-		return "never", nil
+		return "never", build, nil
 	case types.PullPolicyMissing:
-		return "missing", nil
+		return "missing", build, nil
 	case types.PullPolicyIfNotPresent:
-		return "missing", nil
+		return "missing", build, nil
 	case types.PullPolicyBuild:
-		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+		return "never", build, nil
 	case types.PullPolicyRefresh:
-		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+		return "", false, fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
 	default:
-		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+		return "", false, fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
 	}
 }
 
