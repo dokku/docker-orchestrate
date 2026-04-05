@@ -93,21 +93,24 @@ setup() {
   rm -f /tmp/bats-shebang-*
   rm -f /tmp/bats-shell-directive-*
   rm -f /tmp/bats-pre-stop-hooks-*
+  rm -f /tmp/bats-post-start-hooks-*
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
   docker compose -p bats-shell-directive down --remove-orphans --volumes --timeout 5 2>/dev/null || true
   docker compose -p bats-pre-stop-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
+  docker compose -p bats-post-start-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
 
   rm -f /tmp/bats-detached-*
   rm -f /tmp/bats-sync-*
   rm -f /tmp/bats-shebang-*
   rm -f /tmp/bats-shell-directive-*
   rm -f /tmp/bats-pre-stop-hooks-*
+  rm -f /tmp/bats-post-start-hooks-*
 }
 
 @test "default" {
@@ -446,6 +449,44 @@ teardown() {
 
   # Verify fourth hook with compose-level ${VAR} interpolation from host env
   run docker run --rm -v bats-pre-stop-hooks_hook-test:/data nginx:latest cat /data/hook4
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "interpolated-ok" "$output"
+}
+
+@test "compose spec post_start hooks execute inside container during scale-up" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/post-start-hooks"
+
+  export BATS_HOST_TEST_VAR="interpolated-ok"
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-start-hooks web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify first post_start hook ran
+  run docker run --rm -v bats-post-start-hooks_hook-test:/data nginx:latest cat /data/hook1
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "hook1-ran" "$output"
+
+  # Verify second post_start hook ran
+  run docker run --rm -v bats-post-start-hooks_hook-test:/data nginx:latest cat /data/hook2
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "hook2-ran" "$output"
+
+  # Verify third hook with direct environment value
+  run docker run --rm -v bats-post-start-hooks_hook-test:/data nginx:latest cat /data/hook3
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "env-ok" "$output"
+
+  # Verify fourth hook with compose-level ${VAR} interpolation from host env
+  run docker run --rm -v bats-post-start-hooks_hook-test:/data nginx:latest cat /data/hook4
   echo "output: $output"
   echo "status: $status"
   assert_success
