@@ -1553,6 +1553,172 @@ func TestDeployServiceMultipleComposeFiles(t *testing.T) {
 	}
 }
 
+func TestDeployServiceEnvFiles(t *testing.T) {
+	var executedArgs [][]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executedArgs = append(executedArgs, input.Args)
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:  "web",
+				Image: "nginx:latest",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		EnvFiles:              []string{"/tmp/app.env", "/tmp/secrets.env"},
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify that executed docker compose commands contain --env-file flags
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		foundFirst := false
+		foundSecond := false
+		for i, arg := range args {
+			if arg == "--env-file" && i+1 < len(args) {
+				if args[i+1] == "/tmp/app.env" {
+					foundFirst = true
+				}
+				if args[i+1] == "/tmp/secrets.env" {
+					foundSecond = true
+				}
+			}
+		}
+		if !foundFirst || !foundSecond {
+			t.Errorf("expected both --env-file flags in compose command, got args: %v", args)
+		}
+	}
+}
+
+func TestDeployServiceEnvVarsPassedToHooks(t *testing.T) {
+	var capturedEnvs []map[string]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{
+				{
+					ID:      "container123456",
+					Names:   []string{"/test-web-1"},
+					State:   "running",
+					Created: 100,
+					Labels: map[string]string{
+						"com.docker.compose.project": "test",
+						"com.docker.compose.service": "web",
+					},
+				},
+			}, nil
+		},
+		containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+			return container.InspectResponse{
+				ContainerJSONBase: &container.ContainerJSONBase{
+					ID: id,
+				},
+				NetworkSettings: &container.NetworkSettings{},
+			}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		if input.Env != nil {
+			capturedEnvs = append(capturedEnvs, input.Env)
+		}
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:  "web",
+				Image: "nginx:latest",
+				Deploy: &types.DeployConfig{
+					UpdateConfig: &types.UpdateConfig{
+						Order: "stop-first",
+						Extensions: map[string]interface{}{
+							"x-pre-stop-host-command":  "echo pre-stop",
+							"x-post-stop-host-command": "echo post-stop",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	envVars := map[string]string{
+		"DB_HOST": "localhost",
+		"DB_PORT": "5432",
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		EnvVars:               envVars,
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify that env vars were passed to at least one host script execution
+	if len(capturedEnvs) == 0 {
+		t.Fatal("expected env vars to be passed to host script executions")
+	}
+	for _, env := range capturedEnvs {
+		if env["DB_HOST"] != "localhost" {
+			t.Errorf("expected DB_HOST=localhost, got %q", env["DB_HOST"])
+		}
+		if env["DB_PORT"] != "5432" {
+			t.Errorf("expected DB_PORT=5432, got %q", env["DB_PORT"])
+		}
+	}
+}
+
 func intPtr(i int) *int {
 	return &i
 }

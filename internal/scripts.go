@@ -130,6 +130,8 @@ type runScriptInput struct {
 	ContainerID string
 	// Detached is whether to run the script detached
 	Detached bool
+	// Env is the environment variables to pass to the script
+	Env map[string]string
 	// Executor is the command executor to use
 	Executor CommandExecutor
 	// ServiceName is the name of the service
@@ -216,6 +218,7 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 			var output bytes.Buffer
 			_, err := input.Executor(bgCtx, ExecCommandInput{
 				Command:          tempFileName,
+				Env:              input.Env,
 				StdoutWriter:     &output,
 				StderrWriter:     &output,
 				WorkingDirectory: os.TempDir(),
@@ -235,6 +238,7 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 	var output bytes.Buffer
 	_, err = input.Executor(ctx, ExecCommandInput{
 		Command:          tempFile.Name(),
+		Env:              input.Env,
 		StdoutWriter:     &output,
 		StderrWriter:     &output,
 		WorkingDirectory: os.TempDir(),
@@ -255,6 +259,8 @@ type RunContainerScriptInput struct {
 	Client DockerClientInterface
 	// ContainerID is the ID of the container
 	ContainerID string
+	// Env is the environment variables to pass to the container exec
+	Env map[string]string
 	// Script is the script content to execute
 	Script string
 	// ScriptPath is the path inside the container where the script will be written
@@ -371,8 +377,13 @@ func runContainerScript(ctx context.Context, input RunContainerScriptInput) erro
 	// Execute the script using the determined interpreter
 	// The script path is passed as an argument to the interpreter
 	execCmd := append(cmd, input.ScriptPath)
+	var envSlice []string
+	for k, v := range input.Env {
+		envSlice = append(envSlice, fmt.Sprintf("%s=%s", k, v))
+	}
 	execConfig := container.ExecOptions{
 		Cmd:          execCmd,
+		Env:          envSlice,
 		AttachStdout: true,
 		AttachStderr: true,
 	}

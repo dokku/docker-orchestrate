@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/compose-spec/compose-go/v2/dotenv"
 	"github.com/dokku/docker-orchestrate/internal"
 	"github.com/josegonzalez/cli-skeleton/command"
 	"github.com/posener/complete"
@@ -17,6 +18,7 @@ type DeployCommand struct {
 	command.Meta
 
 	containerNameTemplate string
+	envFiles              []string
 	files                 []string
 	profiles              []string
 	projectDirectory      string
@@ -69,6 +71,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
+	f.StringSliceVar(&c.envFiles, "env-file", []string{}, "one or more paths to environment files")
 	f.StringSliceVar(&c.files, "file", []string{}, "one or more paths to Compose files")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
@@ -81,6 +84,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 		c.Meta.AutocompleteFlags(command.FlagSetClient),
 		complete.Flags{
 			"--container-name-template": complete.PredictAnything,
+			"--env-file":                complete.PredictFiles("*"),
 			"--file":                    complete.PredictFiles("*"),
 			"--profiles":                complete.PredictAnything,
 			"--project-directory":       complete.PredictDirs("*"),
@@ -124,8 +128,18 @@ func (c *DeployCommand) Run(args []string) int {
 		c.projectName = filepath.Base(filepath.Dir(c.files[0]))
 	}
 
+	var envVars map[string]string
+	if len(c.envFiles) > 0 {
+		var envErr error
+		envVars, envErr = dotenv.Read(c.envFiles...)
+		if envErr != nil {
+			c.Ui.Error(fmt.Sprintf("error reading env files: %v", envErr))
+			return 1
+		}
+	}
+
 	ctx := context.Background()
-	project, err := internal.ComposeProject(ctx, c.projectName, c.files, c.profiles)
+	project, err := internal.ComposeProject(ctx, c.projectName, c.files, c.profiles, c.envFiles)
 	if err != nil {
 		c.Ui.Error(err.Error())
 		return 1
@@ -155,6 +169,8 @@ func (c *DeployCommand) Run(args []string) int {
 			Client:                client,
 			ComposeFiles:          c.files,
 			ContainerNameTemplate: c.containerNameTemplate,
+			EnvFiles:              c.envFiles,
+			EnvVars:               envVars,
 			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
@@ -173,6 +189,8 @@ func (c *DeployCommand) Run(args []string) int {
 		Client:                client,
 		ComposeFiles:          c.files,
 		ContainerNameTemplate: c.containerNameTemplate,
+		EnvFiles:              c.envFiles,
+		EnvVars:               envVars,
 		Logger:                logger,
 		Project:               project,
 		ProjectName:           c.projectName,

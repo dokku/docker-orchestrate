@@ -198,6 +198,44 @@ func TestComposeFileArgs(t *testing.T) {
 	}
 }
 
+func TestEnvFileArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    []string
+		expected []string
+	}{
+		{
+			name:     "single file",
+			files:    []string{"app.env"},
+			expected: []string{"--env-file", "app.env"},
+		},
+		{
+			name:     "multiple files",
+			files:    []string{"app.env", "secrets.env"},
+			expected: []string{"--env-file", "app.env", "--env-file", "secrets.env"},
+		},
+		{
+			name:     "empty",
+			files:    []string{},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := envFileArgs(tt.files)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("expected %d args, got %d: %v", len(tt.expected), len(result), result)
+			}
+			for i, v := range result {
+				if v != tt.expected[i] {
+					t.Errorf("arg[%d]: expected %q, got %q", i, tt.expected[i], v)
+				}
+			}
+		})
+	}
+}
+
 func TestComposeProjectMultipleFiles(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -224,7 +262,7 @@ func TestComposeProjectMultipleFiles(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("single file", func(t *testing.T) {
-		project, err := ComposeProject(ctx, "test", []string{basePath}, nil)
+		project, err := ComposeProject(ctx, "test", []string{basePath}, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -246,7 +284,7 @@ func TestComposeProjectMultipleFiles(t *testing.T) {
 	})
 
 	t.Run("multiple files merged", func(t *testing.T) {
-		project, err := ComposeProject(ctx, "test", []string{basePath, overridePath}, nil)
+		project, err := ComposeProject(ctx, "test", []string{basePath, overridePath}, nil, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -266,6 +304,71 @@ func TestComposeProjectMultipleFiles(t *testing.T) {
 		}
 		if val == nil || *val != "true" {
 			t.Errorf("expected OVERRIDE_APPLIED='true', got %v", val)
+		}
+	})
+}
+
+func TestComposeProjectWithEnvFiles(t *testing.T) {
+	tempDir := t.TempDir()
+
+	composeContent := `services:
+  web:
+    image: nginx:latest
+    environment:
+      MY_VAR: "${MY_VAR}"
+`
+	envContent := `MY_VAR=hello`
+
+	composePath := tempDir + "/docker-compose.yaml"
+	envPath := tempDir + "/custom.env"
+
+	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
+		t.Fatalf("failed to write compose file: %v", err)
+	}
+	if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
+		t.Fatalf("failed to write env file: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("with env file", func(t *testing.T) {
+		project, err := ComposeProject(ctx, "test", []string{composePath}, nil, []string{envPath})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		service, err := project.GetService("web")
+		if err != nil {
+			t.Fatalf("service 'web' not found: %v", err)
+		}
+
+		val, ok := service.Environment["MY_VAR"]
+		if !ok {
+			t.Fatal("expected MY_VAR in environment")
+		}
+		if val == nil || *val != "hello" {
+			t.Errorf("expected MY_VAR='hello', got %v", val)
+		}
+	})
+
+	t.Run("without env file uses default behavior", func(t *testing.T) {
+		project, err := ComposeProject(ctx, "test", []string{composePath}, nil, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		service, err := project.GetService("web")
+		if err != nil {
+			t.Fatalf("service 'web' not found: %v", err)
+		}
+
+		// Without env file, MY_VAR should be empty (no .env in tempdir)
+		val, ok := service.Environment["MY_VAR"]
+		if !ok {
+			t.Fatal("expected MY_VAR key in environment")
+		}
+		if val != nil && *val != "" {
+			t.Errorf("expected MY_VAR to be empty without env file, got %q", *val)
 		}
 	})
 }

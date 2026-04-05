@@ -51,6 +51,13 @@ docker orchestrate deploy --file docker-compose.yaml --file docker-compose.prod.
 docker orchestrate deploy -f docker-compose.yaml -f docker-compose.prod.yaml
 ```
 
+Deploy with custom environment files (for compose file interpolation):
+
+```bash
+docker orchestrate deploy --env-file .env.production
+docker orchestrate deploy --env-file .env.production --env-file .env.secrets
+```
+
 Deploy while skipping database services:
 
 ```bash
@@ -64,6 +71,7 @@ docker orchestrate deploy web --skip-databases
 
 ### Flags
 
+- `--env-file`: Path to an environment variable file for compose file interpolation. Can be specified multiple times. When specified, these files are used instead of the default `.env` file. Environment variables from these files are also available to host scripts and container pre-stop scripts.
 - `-f, --file`: Path to a Compose configuration file. Can be specified multiple times to merge files (defaults to `docker-compose.yaml` or `docker-compose.yml`).
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
 - `--project-directory`: Specify an alternate working directory.

@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -509,4 +509,22 @@ teardown() {
   echo "status: $status"
   assert_success
   assert_equal "true" "$output"
+}
+
+@test "env file via repeated --env-file flag" {
+  run "$DOCKER_ORCHESTRATE" deploy \
+    --file "${BATS_TEST_DIRNAME}/tests/fixtures/env-file/docker-compose.yaml" \
+    --env-file "${BATS_TEST_DIRNAME}/tests/fixtures/env-file/custom.env" \
+    --project-name bats-env-file web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify the env file was applied by checking the env var on the running container
+  container_id=$(docker ps --filter "label=com.docker.compose.project=bats-env-file" --filter "status=running" -q | head -1)
+  run docker exec "$container_id" printenv FROM_ENV_FILE
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "env-file-works" "$output"
 }
