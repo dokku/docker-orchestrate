@@ -58,6 +58,13 @@ docker orchestrate deploy --env-file .env.production
 docker orchestrate deploy --env-file .env.production --env-file .env.secrets
 ```
 
+Deploy with a specific image pull policy:
+
+```bash
+docker orchestrate deploy --pull always
+docker orchestrate deploy --pull missing web
+```
+
 Deploy while skipping database services:
 
 ```bash
@@ -77,6 +84,7 @@ docker orchestrate deploy web --skip-databases
 - `--project-directory`: Specify an alternate working directory.
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
 - `--profile`: One or more profiles to enable. Can be specified multiple times or as a comma-separated list.
+- `--pull`: Set the image pull policy. Valid values: `always` (always pull), `missing` (pull only if not present locally), `never` (never pull). Overrides the compose file's `pull_policy` when specified. Defaults to `missing` if neither the flag nor `pull_policy` is set.
 - `--replicas`: Override the number of replicas for a specific service. This flag requires a `service-name` argument.
 - `--skip-databases`: Skip deploying database services - as detected by image - when deploying the entire project or a specific service.
 
@@ -183,6 +191,37 @@ services:
 - If `stop_grace_period` is not set, the default timeout is **10 seconds**.
 - The value is applied to all container stop operations including rolling updates, scale-down, and service removal.
 - For services being removed (no longer in the compose file), the default 10-second timeout is always used.
+
+## Image Pull Policy
+
+`docker-orchestrate` respects the compose spec's `pull_policy` field and provides a `--pull` CLI flag to override it.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    pull_policy: always
+```
+
+### Pull Policy Resolution
+
+The effective pull policy is determined as follows:
+
+1. If the `--pull` CLI flag is specified, it takes precedence over the compose file's `pull_policy`
+2. Otherwise, the service's `pull_policy` from the compose file is used
+3. If neither is set, the default is `missing`
+
+### Supported Values
+
+| Value | Behavior |
+|-------|----------|
+| `always` | Always pull the image before deploying. A `docker compose pull` is run before the rolling update to download the image once upfront. |
+| `missing` | Only pull the image if it is not already present locally. This is the default behavior. |
+| `never` | Never pull the image. The image must already be available locally. |
+
+The compose spec value `if_not_present` is treated as `missing`.
+
+The compose spec values `build` and `refresh` are not supported and will produce an error.
 
 ## Script Extensions
 

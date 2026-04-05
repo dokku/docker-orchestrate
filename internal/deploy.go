@@ -36,6 +36,8 @@ type DeployProjectInput struct {
 	Project *types.Project
 	// ProjectName is the name of the project
 	ProjectName string
+	// PullPolicy is the pull policy override from the CLI flag (always, missing, never)
+	PullPolicy string
 	// SkipDatabases is whether to skip deploying databases
 	SkipDatabases bool
 }
@@ -59,6 +61,7 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 			Logger:                input.Logger,
 			Project:               input.Project,
 			ProjectName:           input.ProjectName,
+			PullPolicy:            input.PullPolicy,
 			ServiceName:           serviceName,
 			SkipDatabases:         input.SkipDatabases,
 		})
@@ -154,6 +157,8 @@ type DeployServiceInput struct {
 	Project *types.Project
 	// ProjectName is the name of the project
 	ProjectName string
+	// PullPolicy is the pull policy override from the CLI flag (always, missing, never)
+	PullPolicy string
 	// Replicas is the number of replicas to deploy
 	Replicas int
 	// ServiceName is the name of the service
@@ -198,6 +203,11 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	})
 	if skipService {
 		return nil
+	}
+
+	pullPolicy, err := ResolvePullPolicy(input.PullPolicy, service)
+	if err != nil {
+		return err
 	}
 
 	replicas := ServiceReplicas(input, service)
@@ -342,6 +352,23 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
+	// Pre-pull image when pull policy is "always" to avoid redundant pulls during each batch
+	if pullPolicy == "always" {
+		input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
+		pullArgs := []string{"compose"}
+		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
+		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
+		_, err = executor(ctx, ExecCommandInput{
+			Command:          "docker",
+			Args:             pullArgs,
+			WorkingDirectory: projectDir,
+		})
+		if err != nil {
+			return fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
+		}
+	}
+
 	// Get current running containers
 	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
 		Client:      input.Client,
@@ -426,6 +453,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
+			PullPolicy:                  pullPolicy,
 			ServiceName:                 input.ServiceName,
 			StopTimeout:                 stopTimeout,
 		})
@@ -470,6 +498,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PreStopHooks:                preStopHooks,
 			PreStopHostCommand:          preStopHostCommand,
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
+			PullPolicy:                  pullPolicy,
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
 			ServiceName:                 input.ServiceName,
@@ -676,6 +705,35 @@ func isDatabaseService(serviceImage string, logger *command.ZerologUi) bool {
 	}
 
 	return false
+}
+
+// ResolvePullPolicy resolves the effective pull policy from the CLI flag and compose spec.
+// CLI flag takes precedence. If neither is set, defaults to "missing".
+// Compose spec "if_not_present" is mapped to "missing".
+// Compose spec "build" and "refresh" are not supported and return an error.
+func ResolvePullPolicy(cliPullPolicy string, service *types.ServiceConfig) (string, error) {
+	if cliPullPolicy != "" {
+		return cliPullPolicy, nil
+	}
+
+	switch service.PullPolicy {
+	case "":
+		return "missing", nil
+	case types.PullPolicyAlways:
+		return "always", nil
+	case types.PullPolicyNever:
+		return "never", nil
+	case types.PullPolicyMissing:
+		return "missing", nil
+	case types.PullPolicyIfNotPresent:
+		return "missing", nil
+	case types.PullPolicyBuild:
+		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+	case types.PullPolicyRefresh:
+		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+	default:
+		return "", fmt.Errorf("pull_policy '%s' is not supported by docker-orchestrate", service.PullPolicy)
+	}
 }
 
 // ServiceReplicas returns the number of containers that should be running

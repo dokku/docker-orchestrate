@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/dotenv"
@@ -23,6 +24,7 @@ type DeployCommand struct {
 	profiles              []string
 	projectDirectory      string
 	projectName           string
+	pull                  string
 	replicas              int
 	skipDatabases         bool
 }
@@ -75,6 +77,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.StringSliceVar(&c.files, "file", []string{}, "one or more paths to Compose files")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
+	f.StringVar(&c.pull, "pull", "", "pull image policy (always, missing, never)")
 	f.BoolVar(&c.skipDatabases, "skip-databases", false, "whether to skip deploying databases")
 	return f
 }
@@ -89,6 +92,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 			"--profiles":                complete.PredictAnything,
 			"--project-directory":       complete.PredictDirs("*"),
 			"--project-name":            complete.PredictAnything,
+			"--pull":                    complete.PredictSet("always", "missing", "never"),
 			"--replicas":                complete.PredictAnything,
 			"--skip-databases":          complete.PredictNothing,
 		},
@@ -108,6 +112,12 @@ func (c *DeployCommand) Run(args []string) int {
 	if err != nil {
 		c.Ui.Error(err.Error())
 		c.Ui.Error(command.CommandErrorText(c))
+		return 1
+	}
+
+	validPullPolicies := []string{"always", "missing", "never"}
+	if c.pull != "" && !slices.Contains(validPullPolicies, c.pull) {
+		c.Ui.Error(fmt.Sprintf("invalid --pull value %q: must be one of: always, missing, never", c.pull))
 		return 1
 	}
 
@@ -174,6 +184,7 @@ func (c *DeployCommand) Run(args []string) int {
 			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
+			PullPolicy:            c.pull,
 			SkipDatabases:         c.skipDatabases,
 		})
 		if err != nil {
@@ -194,6 +205,7 @@ func (c *DeployCommand) Run(args []string) int {
 		Logger:                logger,
 		Project:               project,
 		ProjectName:           c.projectName,
+		PullPolicy:            c.pull,
 		Replicas:              c.replicas,
 		ServiceName:           serviceName,
 		SkipDatabases:         c.skipDatabases,

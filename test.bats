@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -527,4 +527,56 @@ teardown() {
   echo "status: $status"
   assert_success
   assert_equal "env-file-works" "$output"
+}
+
+@test "pull policy from compose spec is respected" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-pull-policy" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "pull policy CLI flag overrides compose spec" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy --pull missing web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-pull-policy" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "invalid pull policy is rejected" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy --pull invalid web
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+  assert_output_contains "invalid --pull value"
+}
+
+@test "pull policy if_not_present maps to missing" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pull-policy-if-not-present"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pull-policy-ifnp web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-ifnp" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
 }
