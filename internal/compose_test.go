@@ -160,6 +160,116 @@ func TestComposeFile(t *testing.T) {
 	})
 }
 
+func TestComposeFileArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    []string
+		expected []string
+	}{
+		{
+			name:     "single file",
+			files:    []string{"docker-compose.yaml"},
+			expected: []string{"-f", "docker-compose.yaml"},
+		},
+		{
+			name:     "multiple files",
+			files:    []string{"docker-compose.yaml", "docker-compose.override.yaml"},
+			expected: []string{"-f", "docker-compose.yaml", "-f", "docker-compose.override.yaml"},
+		},
+		{
+			name:     "empty",
+			files:    []string{},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := composeFileArgs(tt.files)
+			if len(result) != len(tt.expected) {
+				t.Fatalf("expected %d args, got %d: %v", len(tt.expected), len(result), result)
+			}
+			for i, v := range result {
+				if v != tt.expected[i] {
+					t.Errorf("arg[%d]: expected %q, got %q", i, tt.expected[i], v)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeProjectMultipleFiles(t *testing.T) {
+	tempDir := t.TempDir()
+
+	baseContent := `services:
+  web:
+    image: nginx:latest
+`
+	overrideContent := `services:
+  web:
+    environment:
+      OVERRIDE_APPLIED: "true"
+`
+
+	basePath := tempDir + "/docker-compose.yaml"
+	overridePath := tempDir + "/docker-compose.override.yaml"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0644); err != nil {
+		t.Fatalf("failed to write base file: %v", err)
+	}
+	if err := os.WriteFile(overridePath, []byte(overrideContent), 0644); err != nil {
+		t.Fatalf("failed to write override file: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("single file", func(t *testing.T) {
+		project, err := ComposeProject(ctx, "test", []string{basePath}, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		service, err := project.GetService("web")
+		if err != nil {
+			t.Fatalf("service 'web' not found: %v", err)
+		}
+
+		if service.Image != "nginx:latest" {
+			t.Errorf("expected image 'nginx:latest', got %q", service.Image)
+		}
+
+		if service.Environment != nil {
+			if _, ok := service.Environment["OVERRIDE_APPLIED"]; ok {
+				t.Error("did not expect OVERRIDE_APPLIED in single-file mode")
+			}
+		}
+	})
+
+	t.Run("multiple files merged", func(t *testing.T) {
+		project, err := ComposeProject(ctx, "test", []string{basePath, overridePath}, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		service, err := project.GetService("web")
+		if err != nil {
+			t.Fatalf("service 'web' not found: %v", err)
+		}
+
+		if service.Image != "nginx:latest" {
+			t.Errorf("expected image 'nginx:latest', got %q", service.Image)
+		}
+
+		val, ok := service.Environment["OVERRIDE_APPLIED"]
+		if !ok {
+			t.Fatal("expected OVERRIDE_APPLIED in environment")
+		}
+		if val == nil || *val != "true" {
+			t.Errorf("expected OVERRIDE_APPLIED='true', got %v", val)
+		}
+	})
+}
+
 func TestRenameContainersToConvention(t *testing.T) {
 	ctx := context.Background()
 	containers := []container.Summary{

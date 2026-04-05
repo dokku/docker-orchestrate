@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dokku/docker-orchestrate/internal"
 	"github.com/josegonzalez/cli-skeleton/command"
@@ -16,7 +17,7 @@ type DeployCommand struct {
 	command.Meta
 
 	containerNameTemplate string
-	file                  string
+	files                 []string
 	profiles              []string
 	projectDirectory      string
 	projectName           string
@@ -68,7 +69,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
-	f.StringVar(&c.file, "file", "", "the path to the Compose file")
+	f.StringSliceVar(&c.files, "file", []string{}, "one or more paths to Compose files")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
 	f.BoolVar(&c.skipDatabases, "skip-databases", false, "whether to skip deploying databases")
@@ -106,24 +107,25 @@ func (c *DeployCommand) Run(args []string) int {
 		return 1
 	}
 
-	if c.file == "" {
-		c.file, err = internal.ComposeFile()
-		if err != nil {
-			c.Ui.Error(err.Error())
+	if len(c.files) == 0 {
+		detectedFile, detectErr := internal.ComposeFile()
+		if detectErr != nil {
+			c.Ui.Error(detectErr.Error())
 			return 1
 		}
+		c.files = []string{detectedFile}
 	}
 
 	if c.projectDirectory == "" {
-		c.projectDirectory = filepath.Dir(c.file)
+		c.projectDirectory = filepath.Dir(c.files[0])
 	}
 
 	if c.projectName == "" {
-		c.projectName = filepath.Base(filepath.Dir(c.file))
+		c.projectName = filepath.Base(filepath.Dir(c.files[0]))
 	}
 
 	ctx := context.Background()
-	project, err := internal.ComposeProject(ctx, c.projectName, c.file, c.profiles)
+	project, err := internal.ComposeProject(ctx, c.projectName, c.files, c.profiles)
 	if err != nil {
 		c.Ui.Error(err.Error())
 		return 1
@@ -148,10 +150,10 @@ func (c *DeployCommand) Run(args []string) int {
 			return 1
 		}
 
-		logger.LogHeader1(fmt.Sprintf("Deploying entire project from %s", c.file))
+		logger.LogHeader1(fmt.Sprintf("Deploying entire project from %s", strings.Join(c.files, ", ")))
 		err = internal.DeployProject(ctx, internal.DeployProjectInput{
 			Client:                client,
-			ComposeFile:           c.file,
+			ComposeFiles:          c.files,
 			ContainerNameTemplate: c.containerNameTemplate,
 			Logger:                logger,
 			Project:               project,
@@ -169,7 +171,7 @@ func (c *DeployCommand) Run(args []string) int {
 	logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 	err = internal.DeployService(ctx, internal.DeployServiceInput{
 		Client:                client,
-		ComposeFile:           c.file,
+		ComposeFiles:          c.files,
 		ContainerNameTemplate: c.containerNameTemplate,
 		Logger:                logger,
 		Project:               project,

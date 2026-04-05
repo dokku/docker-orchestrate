@@ -95,7 +95,7 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 			input := DeployServiceInput{
 				Client:                mockClient,
 				Executor:              mockExecutor,
-				ComposeFile:           "/tmp/docker-compose.yaml",
+				ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 				ContainerNameTemplate: "{{.ServiceName}}",
 				Logger:                logger,
 				Project:               project,
@@ -173,7 +173,7 @@ func TestDeployServiceStopGracePeriod(t *testing.T) {
 		input := DeployServiceInput{
 			Client:                mockClient,
 			Executor:              mockExecutor,
-			ComposeFile:           "/tmp/docker-compose.yaml",
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 			ContainerNameTemplate: "{{.ServiceName}}",
 			Logger:                logger,
 			Project:               project,
@@ -251,7 +251,7 @@ func TestDeployServiceStopGracePeriod(t *testing.T) {
 		input := DeployServiceInput{
 			Client:                mockClient,
 			Executor:              mockExecutor,
-			ComposeFile:           "/tmp/docker-compose.yaml",
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 			ContainerNameTemplate: "{{.ServiceName}}",
 			Logger:                logger,
 			Project:               project,
@@ -368,7 +368,7 @@ func TestDeployServiceCleansUpNonRunningContainers(t *testing.T) {
 			input := DeployServiceInput{
 				Client:                mockClient,
 				Executor:              mockExecutor,
-				ComposeFile:           "/tmp/docker-compose.yaml",
+				ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 				ContainerNameTemplate: "{{.ServiceName}}",
 				Logger:                logger,
 				Project:               project,
@@ -1340,7 +1340,7 @@ func TestDeployServicePreStopHooks(t *testing.T) {
 		input := DeployServiceInput{
 			Client:                mockClient,
 			Executor:              mockExecutor,
-			ComposeFile:           "/tmp/docker-compose.yaml",
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 			ContainerNameTemplate: "{{.ServiceName}}",
 			Logger:                logger,
 			Project:               project,
@@ -1446,7 +1446,7 @@ func TestDeployServicePostStartHooks(t *testing.T) {
 		input := DeployServiceInput{
 			Client:                mockClient,
 			Executor:              mockExecutor,
-			ComposeFile:           "/tmp/docker-compose.yaml",
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
 			ContainerNameTemplate: "{{.ServiceName}}",
 			Logger:                logger,
 			Project:               project,
@@ -1468,6 +1468,89 @@ func TestDeployServicePostStartHooks(t *testing.T) {
 			t.Errorf("expected hook command 'sh -c echo started' to be executed, got %v", hookCmds)
 		}
 	})
+}
+
+func TestDeployServiceEmptyComposeFiles(t *testing.T) {
+	err := DeployService(context.Background(), DeployServiceInput{
+		ComposeFiles: []string{},
+		ProjectName:  "test",
+		ServiceName:  "web",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty ComposeFiles, got nil")
+	}
+	if !strings.Contains(err.Error(), "compose file is required") {
+		t.Errorf("expected 'compose file is required' error, got: %v", err)
+	}
+}
+
+func TestDeployServiceMultipleComposeFiles(t *testing.T) {
+	var executedArgs [][]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executedArgs = append(executedArgs, input.Args)
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:  "web",
+				Image: "nginx:latest",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml", "/tmp/docker-compose.override.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify that executed docker compose commands contain both -f flags
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		foundFirst := false
+		foundSecond := false
+		for i, arg := range args {
+			if arg == "-f" && i+1 < len(args) {
+				if args[i+1] == "/tmp/docker-compose.yaml" {
+					foundFirst = true
+				}
+				if args[i+1] == "/tmp/docker-compose.override.yaml" {
+					foundSecond = true
+				}
+			}
+		}
+		if !foundFirst || !foundSecond {
+			t.Errorf("expected both -f flags in compose command, got args: %v", args)
+		}
+	}
 }
 
 func intPtr(i int) *int {

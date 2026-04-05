@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -491,4 +491,22 @@ teardown() {
   echo "status: $status"
   assert_success
   assert_equal "interpolated-ok" "$output"
+}
+
+@test "multiple compose files via repeated --file flag" {
+  run "$DOCKER_ORCHESTRATE" deploy \
+    --file "${BATS_TEST_DIRNAME}/tests/fixtures/multiple-files/docker-compose.yaml" \
+    --file "${BATS_TEST_DIRNAME}/tests/fixtures/multiple-files/docker-compose.override.yaml" \
+    --project-name bats-multi-file web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify the override was applied by checking the env var on the running container
+  container_id=$(docker ps --filter "label=com.docker.compose.project=bats-multi-file" --filter "status=running" -q | head -1)
+  run docker exec "$container_id" printenv OVERRIDE_APPLIED
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_equal "true" "$output"
 }

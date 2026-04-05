@@ -44,6 +44,13 @@ docker orchestrate deploy --profile production --profile monitoring
 docker orchestrate deploy --profile production,monitoring
 ```
 
+Deploy with multiple compose files (layered):
+
+```bash
+docker orchestrate deploy --file docker-compose.yaml --file docker-compose.prod.yaml
+docker orchestrate deploy -f docker-compose.yaml -f docker-compose.prod.yaml
+```
+
 Deploy while skipping database services:
 
 ```bash
@@ -57,7 +64,7 @@ docker orchestrate deploy web --skip-databases
 
 ### Flags
 
-- `-f, --file`: Path to the Compose configuration file (defaults to `docker-compose.yaml` or `docker-compose.yml`).
+- `-f, --file`: Path to a Compose configuration file. Can be specified multiple times to merge files (defaults to `docker-compose.yaml` or `docker-compose.yml`).
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
 - `--project-directory`: Specify an alternate working directory.
 - `--container-name-template`: Go template for container names. Available variables: `.ProjectName`, `.ServiceName`, `.InstanceID`. Default: `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}`.
