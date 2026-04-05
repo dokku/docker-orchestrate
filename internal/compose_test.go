@@ -1,15 +1,19 @@
 package internal
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"text/template"
 	"time"
 
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
+	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
 	"github.com/rs/zerolog"
@@ -1062,6 +1066,229 @@ func TestScaleUpContainers(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "max failure ratio exceeded") {
 			t.Errorf("expected error to contain 'max failure ratio exceeded', got '%s'", err.Error())
+		}
+	})
+}
+
+func TestPreStopHooksExecutionOrder(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("scale down executes hooks after pre-stop command and before terminate", func(t *testing.T) {
+		var mu sync.Mutex
+		var operations []string
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					Config: &container.Config{
+						Shell: []string{"/bin/sh"},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				mu.Lock()
+				// Distinguish between script exec (has /tmp/pre-stop.sh in Cmd) and hook exec
+				isScript := false
+				for _, c := range config.Cmd {
+					if strings.Contains(c, "pre-stop.sh") {
+						isScript = true
+						break
+					}
+				}
+				if isScript {
+					operations = append(operations, "pre-stop-command")
+				} else {
+					operations = append(operations, "hook:"+strings.Join(config.Cmd, " "))
+				}
+				mu.Unlock()
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				mu.Lock()
+				operations = append(operations, "terminate")
+				mu.Unlock()
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			mu.Lock()
+			operations = append(operations, "host-command")
+			mu.Unlock()
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := ScaleDownContainersInput{
+			Client: mock,
+			CurrentContainers: []container.Summary{
+				{ID: "container1_to_remove", Created: 100},
+			},
+			CurrentReplicas: 1,
+			DesiredReplicas: 0,
+			Executor:        executor,
+			Logger:          logger,
+			ProjectName:     "proj",
+			ServiceName:     "web",
+			PreStopHostCommand: "echo stopping",
+			PreStopCommand:     "#!/bin/sh\necho bye",
+			PreStopHooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"nginx", "-s", "quit"}},
+				{Command: composeTypes.ShellCommand{"echo", "done"}},
+			},
+			PostStopHostCommand: "echo stopped",
+			StopTimeout:         10,
+		}
+
+		err := scaleDownContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Expected order: host-command, pre-stop-command, hook:nginx -s quit, hook:echo done, terminate, host-command
+		expectedOps := []string{
+			"host-command",
+			"pre-stop-command",
+			"hook:nginx -s quit",
+			"hook:echo done",
+			"terminate",
+			"host-command",
+		}
+		if len(operations) != len(expectedOps) {
+			t.Fatalf("expected %d operations, got %d: %v", len(expectedOps), len(operations), operations)
+		}
+		for i := range expectedOps {
+			if operations[i] != expectedOps[i] {
+				t.Errorf("operation[%d]: expected %q, got %q", i, expectedOps[i], operations[i])
+			}
+		}
+	})
+
+	t.Run("rolling update stop-first executes hooks before terminate", func(t *testing.T) {
+		var mu sync.Mutex
+		var hookCmds []string
+		terminateCalled := false
+
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "existing1", Created: 100},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "existing1", Created: 100},
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: true},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				// Only track hook calls (not script calls)
+				isScript := false
+				for _, c := range config.Cmd {
+					if strings.Contains(c, "pre-stop.sh") {
+						isScript = true
+						break
+					}
+				}
+				if !isScript {
+					mu.Lock()
+					hookCmds = append(hookCmds, strings.Join(config.Cmd, " "))
+					mu.Unlock()
+				}
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				mu.Lock()
+				terminateCalled = true
+				// Hooks should have been called before terminate
+				if len(hookCmds) == 0 {
+					t.Error("expected hooks to be called before terminate")
+				}
+				mu.Unlock()
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			ContainersToUpdate: batch,
+			PreStopHooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"kill", "-TERM", "1"}},
+			},
+			StopTimeout: 10,
+			TickerCh:    testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !terminateCalled {
+			t.Error("expected terminate to be called")
+		}
+		if len(hookCmds) != 1 || hookCmds[0] != "kill -TERM 1" {
+			t.Errorf("expected hook command 'kill -TERM 1', got %v", hookCmds)
 		}
 	})
 }

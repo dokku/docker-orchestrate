@@ -197,7 +197,16 @@ The tool supports several types of stop commands that are executed before and af
 
 - **`x-pre-stop-host-command`**: Executed on the host before stopping a container
 - **`x-pre-stop-command`**: Executed inside the container before stopping (synchronously via Docker SDK)
+- **Compose spec `pre_stop` hooks**: Executed inside the container before stopping (via Docker exec API)
 - **`x-post-stop-host-command`**: Executed on the host after stopping a container
+
+**Execution order** when stopping a container:
+
+1. `x-pre-stop-host-command` (on the host)
+2. `x-pre-stop-command` (script inside the container)
+3. Compose spec `pre_stop` hooks (commands inside the container)
+4. Container stop + remove
+5. `x-post-stop-host-command` (on the host)
 
 ```yaml
 services:
@@ -251,6 +260,38 @@ services:
 
 - `/bin/sh` (or the shell specified in `Config.Shell`) - required for script execution
 - The interpreter specified in the shebang (if present) - must be available in the container's PATH
+
+#### Compose Spec Pre-Stop Hooks
+
+`docker-orchestrate` supports the compose spec `pre_stop` lifecycle hooks. These hooks are executed inside the container before it is stopped, after any `x-pre-stop-host-command` and `x-pre-stop-command` have completed.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    pre_stop:
+      - command: ["nginx", "-s", "quit"]
+      - command: ["sh", "-c", "echo shutting down"]
+        user: www-data
+        working_dir: /app
+        environment:
+          GRACEFUL: "true"
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+```
+
+Each hook in the `pre_stop` list is executed sequentially via Docker exec. The following fields are supported:
+
+- **`command`**: The command to execute (required). This is a list of strings (command + arguments).
+- **`user`**: The user to run the command as (optional).
+- **`privileged`**: Whether to run in privileged mode (optional, default: `false`).
+- **`working_dir`**: The working directory for the command (optional).
+- **`environment`**: Environment variables for the command (optional).
+
+Hooks run synchronously and errors are logged but do not block container stop. If a hook fails, subsequent hooks in the list are skipped.
 
 #### Detached Execution
 

@@ -8,9 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -416,6 +418,133 @@ func runContainerScript(ctx context.Context, input RunContainerScriptInput) erro
 		return &ErrorWithOutput{
 			Err:    fmt.Errorf("container script failed for container %s: exit code %d", containerShortID, execInspect.ExitCode),
 			Output: strings.TrimSpace(execOutput.String()),
+		}
+	}
+
+	return nil
+}
+
+// RunContainerHookInput is the input for the runContainerHook function
+type RunContainerHookInput struct {
+	// Client is the Docker client to use
+	Client DockerClientInterface
+	// ContainerID is the ID of the container
+	ContainerID string
+	// Hook is the compose spec service hook to execute
+	Hook composeTypes.ServiceHook
+	// ServiceName is the name of the service
+	ServiceName string
+}
+
+// runContainerHook executes a single compose spec ServiceHook inside a container via Docker exec
+func runContainerHook(ctx context.Context, input RunContainerHookInput) error {
+	if len(input.Hook.Command) == 0 {
+		return nil
+	}
+
+	if input.Client == nil {
+		return fmt.Errorf("client is required")
+	}
+
+	// Convert MappingWithEquals (map[string]*string) to []string ("KEY=VALUE")
+	var env []string
+	if len(input.Hook.Environment) > 0 {
+		keys := make([]string, 0, len(input.Hook.Environment))
+		for k := range input.Hook.Environment {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			v := input.Hook.Environment[k]
+			if v != nil {
+				env = append(env, fmt.Sprintf("%s=%s", k, *v))
+			}
+		}
+	}
+
+	execConfig := container.ExecOptions{
+		Cmd:          []string(input.Hook.Command),
+		User:         input.Hook.User,
+		Privileged:   input.Hook.Privileged,
+		WorkingDir:   input.Hook.WorkingDir,
+		Env:          env,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execID, err := input.Client.ContainerExecCreate(ctx, input.ContainerID, execConfig)
+	if err != nil {
+		return fmt.Errorf("error creating exec instance for hook: %v", err)
+	}
+
+	var execOutput bytes.Buffer
+	execAttach, err := input.Client.ContainerExecAttach(ctx, execID.ID, container.ExecAttachOptions{
+		Detach: false,
+		Tty:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("error attaching to exec instance for hook: %v", err)
+	}
+	if execAttach.Conn != nil {
+		defer execAttach.Close()
+	}
+
+	if err := input.Client.ContainerExecStart(ctx, execID.ID, container.ExecStartOptions{
+		Detach: false,
+		Tty:    false,
+	}); err != nil {
+		return fmt.Errorf("error starting exec instance for hook: %v", err)
+	}
+
+	// Read the output
+	_, _ = io.Copy(&execOutput, execAttach.Reader)
+
+	// Inspect the exec to get the exit code
+	execInspect, err := input.Client.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return fmt.Errorf("error inspecting exec instance for hook: %v", err)
+	}
+
+	if execInspect.ExitCode != 0 {
+		containerShortID := input.ContainerID
+		if len(containerShortID) > 12 {
+			containerShortID = containerShortID[:12]
+		}
+		return &ErrorWithOutput{
+			Err:    fmt.Errorf("container hook failed for container %s: exit code %d", containerShortID, execInspect.ExitCode),
+			Output: strings.TrimSpace(execOutput.String()),
+		}
+	}
+
+	return nil
+}
+
+// RunContainerHooksInput is the input for the runContainerHooks function
+type RunContainerHooksInput struct {
+	// Client is the Docker client to use
+	Client DockerClientInterface
+	// ContainerID is the ID of the container
+	ContainerID string
+	// Hooks is the list of compose spec service hooks to execute
+	Hooks []composeTypes.ServiceHook
+	// ServiceName is the name of the service
+	ServiceName string
+}
+
+// runContainerHooks executes a list of compose spec ServiceHooks sequentially inside a container
+func runContainerHooks(ctx context.Context, input RunContainerHooksInput) error {
+	if len(input.Hooks) == 0 {
+		return nil
+	}
+
+	for _, hook := range input.Hooks {
+		if err := runContainerHook(ctx, RunContainerHookInput{
+			Client:      input.Client,
+			ContainerID: input.ContainerID,
+			Hook:        hook,
+			ServiceName: input.ServiceName,
+		}); err != nil {
+			return err
 		}
 	}
 
