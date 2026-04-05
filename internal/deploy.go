@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
@@ -528,6 +529,7 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	if hasWeb && skipWeb {
 		dependencyOrder = append(dependencyOrder, "web")
 	}
+	var mu sync.Mutex
 	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
 		if name == "web" && skipWeb {
 			return nil
@@ -537,7 +539,9 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 		if err != nil {
 			return err
 		}
+		mu.Lock()
 		dependencyOrder = append(dependencyOrder, service.Name)
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {
