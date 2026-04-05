@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
+	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
 	"github.com/rs/zerolog"
@@ -1235,4 +1237,133 @@ func TestParseDetachedFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeployServicePreStopHooks(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("pre_stop hooks are threaded through to scale-down", func(t *testing.T) {
+		var hookCmds []string
+		callCount := 0
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				if callCount == 0 {
+					callCount++
+					// Non-running containers check
+					return []container.Summary{
+						{ID: "container1_id_long", Names: []string{"/container1"}, State: "running", Created: 100},
+						{ID: "container2_id_long", Names: []string{"/container2"}, State: "running", Created: 200},
+					}, nil
+				}
+				if callCount == 1 {
+					callCount++
+					// Running containers for rename
+					return []container.Summary{
+						{ID: "container1_id_long", Names: []string{"/container1"}, State: "running", Created: 100},
+						{ID: "container2_id_long", Names: []string{"/container2"}, State: "running", Created: 200},
+					}, nil
+				}
+				if callCount == 2 {
+					callCount++
+					// Running containers for scale down check (2 running, want 1)
+					return []container.Summary{
+						{ID: "container1_id_long", Names: []string{"/container1"}, State: "running", Created: 100},
+						{ID: "container2_id_long", Names: []string{"/container2"}, State: "running", Created: 200},
+					}, nil
+				}
+				callCount++
+				return []container.Summary{}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				// Track hook commands (not script commands)
+				isScript := false
+				for _, c := range config.Cmd {
+					if strings.Contains(c, "pre-stop.sh") {
+						isScript = true
+						break
+					}
+				}
+				if !isScript {
+					hookCmds = append(hookCmds, strings.Join(config.Cmd, " "))
+				}
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (dockerTypes.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return dockerTypes.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					PreStop: []types.ServiceHook{
+						{Command: types.ShellCommand{"nginx", "-s", "quit"}},
+					},
+					Deploy: &types.DeployConfig{
+						Replicas: intPtr(1),
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism: &parallelism,
+							Order:       "stop-first",
+						},
+					},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFile:           "/tmp/docker-compose.yaml",
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		_ = DeployService(context.Background(), input)
+
+		// Verify the hook was executed during the scale-down path
+		found := false
+		for _, cmd := range hookCmds {
+			if cmd == "nginx -s quit" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected hook command 'nginx -s quit' to be executed, got %v", hookCmds)
+		}
+	})
+}
+
+func intPtr(i int) *int {
+	return &i
 }

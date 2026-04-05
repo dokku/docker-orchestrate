@@ -1,0 +1,31 @@
+---
+volumes:
+  hook-test:
+
+services:
+  web:
+    image: nginx:latest
+    volumes:
+      - hook-test:/tmp/bats-output
+    pre_stop:
+      - command: ["sh", "-c", "echo -n hook1-ran > /tmp/bats-output/hook1"]
+      - command: ["sh", "-c", "echo -n hook2-ran > /tmp/bats-output/hook2"]
+      - command: ["sh", "-c", "echo -n $$HOOK_VAR > /tmp/bats-output/hook3"]
+        working_dir: /tmp
+        environment:
+          HOOK_VAR: "env-ok"
+      - command: ["sh", "-c", "echo -n $$INTERPOLATED_VAR > /tmp/bats-output/hook4"]
+        environment:
+          INTERPOLATED_VAR: "${BATS_HOST_TEST_VAR}"
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
+        x-pre-stop-host-command: |
+          touch /tmp/bats-pre-stop-hooks-host-completed
+        x-pre-stop-command: |
+          echo -n "script-ran" > /tmp/bats-output/pre-stop-cmd
+        x-post-stop-host-command: |
+          touch /tmp/bats-pre-stop-hooks-post-completed

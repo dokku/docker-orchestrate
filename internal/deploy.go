@@ -109,6 +109,7 @@ func RemoveMissingServices(ctx context.Context, input DeployProjectInput, ordere
 			PostStopHostCommand:         "",
 			PostStopHostCommandDetached: false,
 			PreStopCommand:              "",
+			PreStopHooks:                nil,
 			PreStopHostCommand:          "",
 			PreStopHostCommandDetached:  false,
 			ProjectName:                 input.ProjectName,
@@ -269,6 +270,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
+	preStopHooks := service.PreStop
+
 	projectDir := filepath.Dir(input.ComposeFile)
 
 	executor := input.Executor
@@ -349,6 +352,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PostStopHostCommand:         postStopHostCommand,
 			PostStopHostCommandDetached: postStopHostCommandDetached,
 			PreStopCommand:              preStopCommand,
+			PreStopHooks:                preStopHooks,
 			PreStopHostCommand:          preStopHostCommand,
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectName:                 input.ProjectName,
@@ -399,6 +403,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PostStopHostCommand:         postStopHostCommand,
 			PostStopHostCommandDetached: postStopHostCommandDetached,
 			PreStopCommand:              preStopCommand,
+			PreStopHooks:                preStopHooks,
 			PreStopHostCommand:          preStopHostCommand,
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectDir:                  projectDir,
@@ -441,6 +446,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PostStopHostCommand:         postStopHostCommand,
 			PostStopHostCommandDetached: postStopHostCommandDetached,
 			PreStopCommand:              preStopCommand,
+			PreStopHooks:                preStopHooks,
 			PreStopHostCommand:          preStopHostCommand,
 			PreStopHostCommandDetached:  preStopHostCommandDetached,
 			ProjectDir:                  projectDir,

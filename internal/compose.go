@@ -149,6 +149,8 @@ type RollingUpdateInput struct {
 	PreStopHostCommandDetached bool
 	// PreStopCommand is the command to run inside the container before stopping
 	PreStopCommand string
+	// PreStopHooks are the compose spec pre_stop hooks to run inside the container before stopping
+	PreStopHooks []types.ServiceHook
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -343,6 +345,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 						ServiceName: input.ServiceName,
 					})
 				}
+				// Run compose spec pre_stop hooks inside container
+				_ = runContainerHooks(ctx, RunContainerHooksInput{
+					Client:      input.Client,
+					ContainerID: newContainer.ID,
+					Hooks:       input.PreStopHooks,
+					ServiceName: input.ServiceName,
+				})
 				_ = input.Client.ContainerTerminate(ctx, newContainer.ID, input.StopTimeout)
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
@@ -391,6 +400,13 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 						ServiceName: input.ServiceName,
 					})
 				}
+				// Run compose spec pre_stop hooks inside container
+				_ = runContainerHooks(ctx, RunContainerHooksInput{
+					Client:      input.Client,
+					ContainerID: oldContainer.ID,
+					Hooks:       input.PreStopHooks,
+					ServiceName: input.ServiceName,
+				})
 				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID, input.StopTimeout); err != nil {
 					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
@@ -463,6 +479,13 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 					ServiceName: input.ServiceName,
 				})
 			}
+			// Run compose spec pre_stop hooks inside container
+			_ = runContainerHooks(ctx, RunContainerHooksInput{
+				Client:      input.Client,
+				ContainerID: containerID,
+				Hooks:       input.PreStopHooks,
+				ServiceName: input.ServiceName,
+			})
 			err := input.Client.ContainerTerminate(stopCtx, containerID, input.StopTimeout)
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
@@ -649,6 +672,8 @@ type ScaleDownContainersInput struct {
 	PreStopHostCommandDetached bool
 	// PreStopCommand is the command to run inside the container before stopping
 	PreStopCommand string
+	// PreStopHooks are the compose spec pre_stop hooks to run inside the container before stopping
+	PreStopHooks []types.ServiceHook
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -721,6 +746,13 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 				ServiceName: input.ServiceName,
 			})
 		}
+		// Run compose spec pre_stop hooks inside container
+		_ = runContainerHooks(ctx, RunContainerHooksInput{
+			Client:      input.Client,
+			ContainerID: container.ID,
+			Hooks:       input.PreStopHooks,
+			ServiceName: input.ServiceName,
+		})
 		if err := input.Client.ContainerTerminate(ctx, container.ID, input.StopTimeout); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
@@ -778,6 +810,8 @@ type ScaleUpContainersInput struct {
 	PreStopHostCommandDetached bool
 	// PreStopCommand is the command to run inside the container before stopping
 	PreStopCommand string
+	// PreStopHooks are the compose spec pre_stop hooks to run inside the container before stopping
+	PreStopHooks []types.ServiceHook
 	// PostStopHostCommand is the command to run after stopping a container
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
@@ -925,6 +959,13 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 							ServiceName: input.ServiceName,
 						})
 					}
+					// Run compose spec pre_stop hooks inside container
+					_ = runContainerHooks(ctx, RunContainerHooksInput{
+						Client:      input.Client,
+						ContainerID: c.ID,
+						Hooks:       input.PreStopHooks,
+						ServiceName: input.ServiceName,
+					})
 					_ = input.Client.ContainerTerminate(ctx, c.ID, input.StopTimeout)
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,

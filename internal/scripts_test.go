@@ -7,9 +7,11 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -963,6 +965,351 @@ func TestRunContainerScript(t *testing.T) {
 				t.Errorf("expected cmd %v, got %v", expectedCmd, capturedCmd)
 				break
 			}
+		}
+	})
+}
+
+func TestRunContainerHook(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("empty command", func(t *testing.T) {
+		mockClient := &mockDockerClient{}
+		input := RunContainerHookInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Hook:        composeTypes.ServiceHook{},
+			ServiceName: "test-service",
+		}
+		err := runContainerHook(ctx, input)
+		if err != nil {
+			t.Errorf("expected nil error for empty command, got %v", err)
+		}
+	})
+
+	t.Run("missing client", func(t *testing.T) {
+		input := RunContainerHookInput{
+			ContainerID: "test-container",
+			Hook: composeTypes.ServiceHook{
+				Command: composeTypes.ShellCommand{"echo", "hello"},
+			},
+			ServiceName: "test-service",
+		}
+		err := runContainerHook(ctx, input)
+		if err == nil || !strings.Contains(err.Error(), "client is required") {
+			t.Errorf("expected 'client is required' error, got %v", err)
+		}
+	})
+
+	t.Run("successful execution with all fields", func(t *testing.T) {
+		var capturedConfig container.ExecOptions
+		val1 := "bar"
+		val2 := "qux"
+		mockClient := &mockDockerClient{
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				capturedConfig = config
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		input := RunContainerHookInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id-long-enough",
+			Hook: composeTypes.ServiceHook{
+				Command:    composeTypes.ShellCommand{"nginx", "-s", "quit"},
+				User:       "www-data",
+				Privileged: true,
+				WorkingDir: "/app",
+				Environment: composeTypes.MappingWithEquals{
+					"BAZ": &val2,
+					"FOO": &val1,
+				},
+			},
+			ServiceName: "test-service",
+		}
+
+		err := runContainerHook(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Verify Cmd
+		expectedCmd := []string{"nginx", "-s", "quit"}
+		if len(capturedConfig.Cmd) != len(expectedCmd) {
+			t.Fatalf("expected cmd %v, got %v", expectedCmd, capturedConfig.Cmd)
+		}
+		for i := range expectedCmd {
+			if capturedConfig.Cmd[i] != expectedCmd[i] {
+				t.Errorf("expected cmd[%d]=%s, got %s", i, expectedCmd[i], capturedConfig.Cmd[i])
+			}
+		}
+
+		// Verify User
+		if capturedConfig.User != "www-data" {
+			t.Errorf("expected user www-data, got %s", capturedConfig.User)
+		}
+
+		// Verify Privileged
+		if !capturedConfig.Privileged {
+			t.Error("expected privileged to be true")
+		}
+
+		// Verify WorkingDir
+		if capturedConfig.WorkingDir != "/app" {
+			t.Errorf("expected working dir /app, got %s", capturedConfig.WorkingDir)
+		}
+
+		// Verify Env (sorted by key)
+		expectedEnv := []string{"BAZ=qux", "FOO=bar"}
+		if len(capturedConfig.Env) != len(expectedEnv) {
+			t.Fatalf("expected env %v, got %v", expectedEnv, capturedConfig.Env)
+		}
+		for i := range expectedEnv {
+			if capturedConfig.Env[i] != expectedEnv[i] {
+				t.Errorf("expected env[%d]=%s, got %s", i, expectedEnv[i], capturedConfig.Env[i])
+			}
+		}
+
+		// Verify AttachStdout/Stderr
+		if !capturedConfig.AttachStdout {
+			t.Error("expected AttachStdout to be true")
+		}
+		if !capturedConfig.AttachStderr {
+			t.Error("expected AttachStderr to be true")
+		}
+	})
+
+	t.Run("non-zero exit code", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("some error output")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 1}, nil
+			},
+		}
+
+		input := RunContainerHookInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id-long-enough",
+			Hook: composeTypes.ServiceHook{
+				Command: composeTypes.ShellCommand{"exit", "1"},
+			},
+			ServiceName: "test-service",
+		}
+
+		err := runContainerHook(ctx, input)
+		if err == nil {
+			t.Fatal("expected error for non-zero exit code")
+		}
+
+		var errWithOutput *ErrorWithOutput
+		if !errors.As(err, &errWithOutput) {
+			t.Fatalf("expected ErrorWithOutput, got %T", err)
+		}
+		if !strings.Contains(errWithOutput.Error(), "container hook failed") {
+			t.Errorf("expected 'container hook failed' in error, got %s", errWithOutput.Error())
+		}
+		if !strings.Contains(errWithOutput.Error(), "test-conta") {
+			t.Errorf("expected truncated container ID in error, got %s", errWithOutput.Error())
+		}
+	})
+
+	t.Run("nil environment values skipped", func(t *testing.T) {
+		var capturedConfig container.ExecOptions
+		val := "bar"
+		mockClient := &mockDockerClient{
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				capturedConfig = config
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		input := RunContainerHookInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Hook: composeTypes.ServiceHook{
+				Command: composeTypes.ShellCommand{"echo", "hello"},
+				Environment: composeTypes.MappingWithEquals{
+					"KEEP":    &val,
+					"SKIP_ME": nil,
+				},
+			},
+			ServiceName: "test-service",
+		}
+
+		err := runContainerHook(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		expectedEnv := []string{"KEEP=bar"}
+		if len(capturedConfig.Env) != len(expectedEnv) {
+			t.Fatalf("expected env %v, got %v", expectedEnv, capturedConfig.Env)
+		}
+		if capturedConfig.Env[0] != expectedEnv[0] {
+			t.Errorf("expected env[0]=%s, got %s", expectedEnv[0], capturedConfig.Env[0])
+		}
+	})
+}
+
+func TestRunContainerHooks(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil hooks", func(t *testing.T) {
+		err := runContainerHooks(ctx, RunContainerHooksInput{
+			Client:      &mockDockerClient{},
+			ContainerID: "test-container",
+			Hooks:       nil,
+			ServiceName: "test-service",
+		})
+		if err != nil {
+			t.Errorf("expected nil error for nil hooks, got %v", err)
+		}
+	})
+
+	t.Run("empty hooks", func(t *testing.T) {
+		err := runContainerHooks(ctx, RunContainerHooksInput{
+			Client:      &mockDockerClient{},
+			ContainerID: "test-container",
+			Hooks:       []composeTypes.ServiceHook{},
+			ServiceName: "test-service",
+		})
+		if err != nil {
+			t.Errorf("expected nil error for empty hooks, got %v", err)
+		}
+	})
+
+	t.Run("multiple hooks executed sequentially", func(t *testing.T) {
+		var mu sync.Mutex
+		var executedCmds []string
+		mockClient := &mockDockerClient{
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				mu.Lock()
+				executedCmds = append(executedCmds, strings.Join(config.Cmd, " "))
+				mu.Unlock()
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+
+		input := RunContainerHooksInput{
+			Client:      mockClient,
+			ContainerID: "test-container",
+			Hooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"nginx", "-s", "quit"}},
+				{Command: composeTypes.ShellCommand{"echo", "done"}},
+				{Command: composeTypes.ShellCommand{"rm", "-f", "/tmp/lock"}},
+			},
+			ServiceName: "test-service",
+		}
+
+		err := runContainerHooks(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		expectedCmds := []string{"nginx -s quit", "echo done", "rm -f /tmp/lock"}
+		if len(executedCmds) != len(expectedCmds) {
+			t.Fatalf("expected %d hooks executed, got %d", len(expectedCmds), len(executedCmds))
+		}
+		for i := range expectedCmds {
+			if executedCmds[i] != expectedCmds[i] {
+				t.Errorf("expected hook[%d]=%q, got %q", i, expectedCmds[i], executedCmds[i])
+			}
+		}
+	})
+
+	t.Run("short-circuit on error", func(t *testing.T) {
+		execCount := 0
+		mockClient := &mockDockerClient{
+			containerExecCreate: func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error) {
+				execCount++
+				return container.ExecCreateResponse{ID: "exec-123"}, nil
+			},
+			containerExecStart: func(ctx context.Context, execID string, config container.ExecStartOptions) error {
+				return nil
+			},
+			containerExecAttach: func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+				reader := strings.NewReader("")
+				return types.HijackedResponse{
+					Conn:   &mockConn{},
+					Reader: bufio.NewReader(reader),
+				}, nil
+			},
+			containerExecInspect: func(ctx context.Context, execID string) (container.ExecInspect, error) {
+				// First call succeeds, second fails
+				if execCount == 1 {
+					return container.ExecInspect{ExitCode: 0}, nil
+				}
+				return container.ExecInspect{ExitCode: 1}, nil
+			},
+		}
+
+		input := RunContainerHooksInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id-long-enough",
+			Hooks: []composeTypes.ServiceHook{
+				{Command: composeTypes.ShellCommand{"echo", "first"}},
+				{Command: composeTypes.ShellCommand{"exit", "1"}},
+				{Command: composeTypes.ShellCommand{"echo", "should-not-run"}},
+			},
+			ServiceName: "test-service",
+		}
+
+		err := runContainerHooks(ctx, input)
+		if err == nil {
+			t.Fatal("expected error from failing hook")
+		}
+		if execCount != 2 {
+			t.Errorf("expected 2 exec calls (first succeeds, second fails), got %d", execCount)
 		}
 	})
 }
