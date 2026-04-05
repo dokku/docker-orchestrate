@@ -149,6 +149,26 @@ services:
     # This service will be deployed normally
 ```
 
+## Container Stop Grace Period
+
+`docker-orchestrate` respects the compose spec's `stop_grace_period` field when terminating containers during rolling updates, scale-down operations, or service removal. This controls how long Docker waits for a container to stop gracefully before forcefully killing it.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    stop_grace_period: 30s
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+```
+
+- If `stop_grace_period` is not set, the default timeout is **10 seconds**.
+- The value is applied to all container stop operations including rolling updates, scale-down, and service removal.
+- For services being removed (no longer in the compose file), the default 10-second timeout is always used.
+
 ## Script Extensions
 
 In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.

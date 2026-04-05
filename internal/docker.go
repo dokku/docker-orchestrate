@@ -25,7 +25,7 @@ type DockerClientInterface interface {
 	ContainerRename(ctx context.Context, containerID, newName string) error
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
-	ContainerTerminate(ctx context.Context, containerID string) error
+	ContainerTerminate(ctx context.Context, containerID string, timeoutSeconds int) error
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 }
 
@@ -83,8 +83,7 @@ func (d *DockerClient) ContainerStart(ctx context.Context, containerID string, o
 }
 
 // ContainerTerminate terminates a container
-func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID string) error {
-	timeoutSeconds := 10
+func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID string, timeoutSeconds int) error {
 	if err := d.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeoutSeconds}); err != nil {
 		return fmt.Errorf("error stopping container: %v", err)
 	}

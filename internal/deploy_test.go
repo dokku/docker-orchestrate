@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
@@ -119,6 +120,149 @@ func TestDeployServiceReplicaOverride(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeployServiceStopGracePeriod(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("custom stop_grace_period is passed through", func(t *testing.T) {
+		var capturedTimeout int
+		callCount := 0
+		gracePeriod := types.Duration(30 * time.Second)
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				// First call: non-running containers check, second: running containers
+				if callCount < 2 {
+					callCount++
+					return []container.Summary{
+						{ID: "old1_container_id", Names: []string{"/old1"}, State: "running", Created: 100},
+					}, nil
+				}
+				callCount++
+				return []container.Summary{}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				capturedTimeout = timeoutSeconds
+				return nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:            "web",
+					StopGracePeriod: &gracePeriod,
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFile:           "/tmp/docker-compose.yaml",
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		// We expect the deploy to proceed and pass 30 as the stop timeout
+		// The deploy will attempt to scale down from 1 to 1 (no-op), then rolling update
+		_ = DeployService(context.Background(), input)
+
+		if capturedTimeout != 0 && capturedTimeout != 30 {
+			t.Errorf("expected timeout 30, got %d", capturedTimeout)
+		}
+	})
+
+	t.Run("nil stop_grace_period defaults to 10", func(t *testing.T) {
+		var capturedTimeout int
+		terminateCalled := false
+		callCount := 0
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				if callCount == 0 {
+					callCount++
+					// Return containers for non-running check
+					return []container.Summary{
+						{ID: "old1_container_id", Names: []string{"/old1"}, State: "running", Created: 100},
+						{ID: "old2_container_id", Names: []string{"/old2"}, State: "running", Created: 200},
+					}, nil
+				}
+				if callCount == 1 {
+					callCount++
+					// Return running containers for rename
+					return []container.Summary{
+						{ID: "old1_container_id", Names: []string{"/old1"}, State: "running", Created: 100},
+						{ID: "old2_container_id", Names: []string{"/old2"}, State: "running", Created: 200},
+					}, nil
+				}
+				if callCount == 2 {
+					callCount++
+					// Return running containers for scale down check
+					return []container.Summary{
+						{ID: "old1_container_id", Names: []string{"/old1"}, State: "running", Created: 100},
+						{ID: "old2_container_id", Names: []string{"/old2"}, State: "running", Created: 200},
+					}, nil
+				}
+				callCount++
+				return []container.Summary{}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminateCalled = true
+				capturedTimeout = timeoutSeconds
+				return nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		oneReplica := 1
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:            "web",
+					StopGracePeriod: nil,
+					Deploy: &types.DeployConfig{
+						Replicas: &oneReplica,
+					},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFile:           "/tmp/docker-compose.yaml",
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		_ = DeployService(context.Background(), input)
+
+		if terminateCalled && capturedTimeout != 10 {
+			t.Errorf("expected default timeout 10, got %d", capturedTimeout)
+		}
+	})
 }
 
 func TestDeployServiceCleansUpNonRunningContainers(t *testing.T) {

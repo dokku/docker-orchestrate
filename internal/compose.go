@@ -153,6 +153,8 @@ type RollingUpdateInput struct {
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
 	PostStopHostCommandDetached bool
+	// StopTimeout is the timeout in seconds for stopping containers (from stop_grace_period)
+	StopTimeout int
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -341,7 +343,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 						ServiceName: input.ServiceName,
 					})
 				}
-				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
+				_ = input.Client.ContainerTerminate(ctx, newContainer.ID, input.StopTimeout)
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
@@ -389,7 +391,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 						ServiceName: input.ServiceName,
 					})
 				}
-				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID); err != nil {
+				if err := input.Client.ContainerTerminate(ctx, oldContainer.ID, input.StopTimeout); err != nil {
 					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
 				}
 				_ = runHostScript(ctx, runScriptInput{
@@ -461,7 +463,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 					ServiceName: input.ServiceName,
 				})
 			}
-			err := input.Client.ContainerTerminate(stopCtx, containerID)
+			err := input.Client.ContainerTerminate(stopCtx, containerID, input.StopTimeout)
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
 				ContainerID: containerID,
@@ -586,7 +588,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 					Script:      input.PreStopHostCommand,
 					ScriptType:  "pre-stop",
 				})
-				_ = input.Client.ContainerTerminate(ctx, newContainer.ID)
+				_ = input.Client.ContainerTerminate(ctx, newContainer.ID, input.StopTimeout)
 				_ = runHostScript(ctx, runScriptInput{
 					Client:      input.Client,
 					ContainerID: newContainer.ID,
@@ -651,6 +653,8 @@ type ScaleDownContainersInput struct {
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
 	PostStopHostCommandDetached bool
+	// StopTimeout is the timeout in seconds for stopping containers (from stop_grace_period)
+	StopTimeout int
 }
 
 // scaleDownContainers scales down containers by stopping and removing excess ones
@@ -717,7 +721,7 @@ func scaleDownContainers(ctx context.Context, input ScaleDownContainersInput) er
 				ServiceName: input.ServiceName,
 			})
 		}
-		if err := input.Client.ContainerTerminate(ctx, container.ID); err != nil {
+		if err := input.Client.ContainerTerminate(ctx, container.ID, input.StopTimeout); err != nil {
 			return fmt.Errorf("error scaling down: %v", err)
 		}
 		_ = runHostScript(ctx, runScriptInput{
@@ -778,6 +782,8 @@ type ScaleUpContainersInput struct {
 	PostStopHostCommand string
 	// PostStopHostCommandDetached indicates if the post-stop command should run detached
 	PostStopHostCommandDetached bool
+	// StopTimeout is the timeout in seconds for stopping containers (from stop_grace_period)
+	StopTimeout int
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
 }
@@ -919,7 +925,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 							ServiceName: input.ServiceName,
 						})
 					}
-					_ = input.Client.ContainerTerminate(ctx, c.ID)
+					_ = input.Client.ContainerTerminate(ctx, c.ID, input.StopTimeout)
 					_ = runHostScript(ctx, runScriptInput{
 						Client:      input.Client,
 						ContainerID: c.ID,
