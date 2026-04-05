@@ -271,6 +271,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	preStopHooks := service.PreStop
+	postStartHooks := service.PostStart
 
 	projectDir := filepath.Dir(input.ComposeFile)
 
@@ -443,6 +444,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			MaxFailureRatio:             maxFailureRatio,
 			Monitor:                     monitor,
 			Parallelism:                 parallelism,
+			PostStartHooks:              postStartHooks,
 			PostStopHostCommand:         postStopHostCommand,
 			PostStopHostCommandDetached: postStopHostCommandDetached,
 			PreStopCommand:              preStopCommand,
