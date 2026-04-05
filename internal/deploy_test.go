@@ -1720,11 +1720,16 @@ func TestDeployServiceEnvVarsPassedToHooks(t *testing.T) {
 }
 
 func TestResolvePullPolicy(t *testing.T) {
+	buildConfig := &types.BuildConfig{Context: "."}
+
 	tests := []struct {
 		name           string
 		cliPullPolicy  string
+		cliBuild       bool
 		servicePull    string
+		serviceBuild   *types.BuildConfig
 		expectedPolicy string
+		expectedBuild  bool
 		expectError    bool
 		errorContains  string
 	}{
@@ -1751,25 +1756,21 @@ func TestResolvePullPolicy(t *testing.T) {
 		// Compose spec cases (no CLI override)
 		{
 			name:           "compose_always",
-			cliPullPolicy:  "",
 			servicePull:    "always",
 			expectedPolicy: "always",
 		},
 		{
 			name:           "compose_never",
-			cliPullPolicy:  "",
 			servicePull:    "never",
 			expectedPolicy: "never",
 		},
 		{
 			name:           "compose_missing",
-			cliPullPolicy:  "",
 			servicePull:    "missing",
 			expectedPolicy: "missing",
 		},
 		{
 			name:           "compose_if_not_present_maps_to_missing",
-			cliPullPolicy:  "",
 			servicePull:    "if_not_present",
 			expectedPolicy: "missing",
 		},
@@ -1777,29 +1778,70 @@ func TestResolvePullPolicy(t *testing.T) {
 		// Default case
 		{
 			name:           "neither_set_defaults_to_missing",
-			cliPullPolicy:  "",
-			servicePull:    "",
 			expectedPolicy: "missing",
+		},
+
+		// Build cases
+		{
+			name:           "compose_build_with_build_section",
+			servicePull:    "build",
+			serviceBuild:   buildConfig,
+			expectedPolicy: "never",
+			expectedBuild:  true,
+		},
+		{
+			name:          "compose_build_without_build_section",
+			servicePull:   "build",
+			expectError:   true,
+			errorContains: "requires a build section",
+		},
+		{
+			name:           "cli_build_with_build_section",
+			cliBuild:       true,
+			serviceBuild:   buildConfig,
+			expectedPolicy: "missing",
+			expectedBuild:  true,
+		},
+		{
+			name:           "cli_build_without_build_section",
+			cliBuild:       true,
+			expectedPolicy: "missing",
+			expectedBuild:  false,
+		},
+		{
+			name:           "cli_build_with_cli_pull_always",
+			cliPullPolicy:  "always",
+			cliBuild:       true,
+			serviceBuild:   buildConfig,
+			expectedPolicy: "always",
+			expectedBuild:  true,
+		},
+		{
+			name:           "cli_build_with_compose_pull_never",
+			cliBuild:       true,
+			servicePull:    "never",
+			serviceBuild:   buildConfig,
+			expectedPolicy: "never",
+			expectedBuild:  true,
+		},
+		{
+			name:           "compose_build_with_cli_pull_override",
+			cliPullPolicy:  "always",
+			servicePull:    "build",
+			serviceBuild:   buildConfig,
+			expectedPolicy: "always",
+			expectedBuild:  true,
 		},
 
 		// Error cases
 		{
-			name:          "compose_build_rejected",
-			cliPullPolicy: "",
-			servicePull:   "build",
-			expectError:   true,
-			errorContains: "not supported",
-		},
-		{
 			name:          "compose_refresh_rejected",
-			cliPullPolicy: "",
 			servicePull:   "refresh",
 			expectError:   true,
 			errorContains: "not supported",
 		},
 		{
 			name:          "compose_unknown_rejected",
-			cliPullPolicy: "",
 			servicePull:   "daily",
 			expectError:   true,
 			errorContains: "not supported",
@@ -1811,9 +1853,10 @@ func TestResolvePullPolicy(t *testing.T) {
 			service := &types.ServiceConfig{
 				Name:       "web",
 				PullPolicy: tt.servicePull,
+				Build:      tt.serviceBuild,
 			}
 
-			result, err := ResolvePullPolicy(tt.cliPullPolicy, service)
+			result, build, err := ResolvePullPolicy(tt.cliPullPolicy, tt.cliBuild, service)
 			if tt.expectError {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -1828,7 +1871,10 @@ func TestResolvePullPolicy(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if result != tt.expectedPolicy {
-				t.Errorf("expected %q, got %q", tt.expectedPolicy, result)
+				t.Errorf("expected policy %q, got %q", tt.expectedPolicy, result)
+			}
+			if build != tt.expectedBuild {
+				t.Errorf("expected build %v, got %v", tt.expectedBuild, build)
 			}
 		})
 	}
@@ -2203,7 +2249,121 @@ func TestDeployServicePullPolicyDefault(t *testing.T) {
 	}
 }
 
-func TestDeployServicePullPolicyBuildError(t *testing.T) {
+func TestDeployServicePullPolicyBuild(t *testing.T) {
+	var executedArgs [][]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executedArgs = append(executedArgs, input.Args)
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:       "web",
+				Image:      "nginx:latest",
+				PullPolicy: "build",
+				Build:      &types.BuildConfig{Context: "."},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify pre-build command was executed
+	foundPreBuild := false
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		for i, arg := range args {
+			if arg == "build" && i+1 < len(args) && args[i+1] == "web" {
+				foundPreBuild = true
+				break
+			}
+		}
+	}
+	if !foundPreBuild {
+		t.Error("expected docker compose build command for pull_policy: build, got none")
+	}
+
+	// Verify NO pre-pull command
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		for i, arg := range args {
+			if arg == "pull" && i+1 < len(args) && args[i+1] == "web" {
+				t.Error("unexpected docker compose pull command when building")
+			}
+		}
+	}
+
+	// Verify compose up/create commands contain --build and --pull never
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		hasUp := false
+		hasCreate := false
+		for _, arg := range args {
+			if arg == "up" {
+				hasUp = true
+			}
+			if arg == "create" {
+				hasCreate = true
+			}
+		}
+		if !hasUp && !hasCreate {
+			continue
+		}
+		foundBuild := false
+		foundPullNever := false
+		for i, arg := range args {
+			if arg == "--build" {
+				foundBuild = true
+			}
+			if arg == "--pull" && i+1 < len(args) && args[i+1] == "never" {
+				foundPullNever = true
+			}
+		}
+		if !foundBuild {
+			t.Errorf("expected --build in compose command, got args: %v", args)
+		}
+		if !foundPullNever {
+			t.Errorf("expected --pull never in compose command, got args: %v", args)
+		}
+	}
+}
+
+func TestDeployServicePullPolicyBuildNoBuildSection(t *testing.T) {
 	mockClient := &mockDockerClient{
 		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 			return []container.Summary{}, nil
@@ -2244,10 +2404,197 @@ func TestDeployServicePullPolicyBuildError(t *testing.T) {
 		ServiceName:           "web",
 	})
 	if err == nil {
-		t.Fatal("expected error for build pull policy, got nil")
+		t.Fatal("expected error for pull_policy: build without build section, got nil")
 	}
-	if !strings.Contains(err.Error(), "not supported") {
-		t.Errorf("expected error to contain 'not supported', got: %v", err)
+	if !strings.Contains(err.Error(), "requires a build section") {
+		t.Errorf("expected error to contain 'requires a build section', got: %v", err)
+	}
+}
+
+func TestDeployServiceBuildFlag(t *testing.T) {
+	var executedArgs [][]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executedArgs = append(executedArgs, input.Args)
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:  "web",
+				Image: "nginx:latest",
+				Build: &types.BuildConfig{Context: "."},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Build:                 true,
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify pre-build command was executed
+	foundPreBuild := false
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		for i, arg := range args {
+			if arg == "build" && i+1 < len(args) && args[i+1] == "web" {
+				foundPreBuild = true
+				break
+			}
+		}
+	}
+	if !foundPreBuild {
+		t.Error("expected docker compose build command for --build flag, got none")
+	}
+
+	// Verify compose up/create commands contain --build and --pull missing (default)
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		hasUp := false
+		hasCreate := false
+		for _, arg := range args {
+			if arg == "up" {
+				hasUp = true
+			}
+			if arg == "create" {
+				hasCreate = true
+			}
+		}
+		if !hasUp && !hasCreate {
+			continue
+		}
+		foundBuild := false
+		foundPullMissing := false
+		for i, arg := range args {
+			if arg == "--build" {
+				foundBuild = true
+			}
+			if arg == "--pull" && i+1 < len(args) && args[i+1] == "missing" {
+				foundPullMissing = true
+			}
+		}
+		if !foundBuild {
+			t.Errorf("expected --build in compose command, got args: %v", args)
+		}
+		if !foundPullMissing {
+			t.Errorf("expected --pull missing in compose command, got args: %v", args)
+		}
+	}
+}
+
+func TestDeployServiceBuildFlagNoBuildSection(t *testing.T) {
+	var executedArgs [][]string
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executedArgs = append(executedArgs, input.Args)
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name:  "web",
+				Image: "nginx:latest",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Build:                 true,
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify NO pre-build command (service has no build section)
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		for i, arg := range args {
+			if arg == "build" && i+1 < len(args) && args[i+1] == "web" {
+				t.Error("unexpected docker compose build command for service without build section")
+			}
+		}
+	}
+
+	// Verify compose up/create commands do NOT contain --build
+	for _, args := range executedArgs {
+		if args[0] != "compose" {
+			continue
+		}
+		hasUp := false
+		hasCreate := false
+		for _, arg := range args {
+			if arg == "up" {
+				hasUp = true
+			}
+			if arg == "create" {
+				hasCreate = true
+			}
+		}
+		if !hasUp && !hasCreate {
+			continue
+		}
+		for _, arg := range args {
+			if arg == "--build" {
+				t.Errorf("unexpected --build in compose command for service without build section, got args: %v", args)
+			}
+		}
 	}
 }
 

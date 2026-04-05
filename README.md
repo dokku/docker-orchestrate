@@ -65,6 +65,13 @@ docker orchestrate deploy --pull always
 docker orchestrate deploy --pull missing web
 ```
 
+Build images before deploying:
+
+```bash
+docker orchestrate deploy --build
+docker orchestrate deploy --build --pull never web
+```
+
 Deploy while skipping database services:
 
 ```bash
@@ -78,6 +85,7 @@ docker orchestrate deploy web --skip-databases
 
 ### Flags
 
+- `--build`: Build images before deploying. When specified, `docker compose build` is run before the rolling update and `--build` is passed to all compose commands. Only applies to services with a `build` section. Can be combined with `--pull`.
 - `--env-file`: Path to an environment variable file for compose file interpolation. Can be specified multiple times. When specified, these files are used instead of the default `.env` file. Environment variables from these files are also available to host scripts and container pre-stop scripts.
 - `-f, --file`: Path to a Compose configuration file. Can be specified multiple times to merge files (defaults to `docker-compose.yaml` or `docker-compose.yml`).
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
@@ -218,10 +226,29 @@ The effective pull policy is determined as follows:
 | `always` | Always pull the image before deploying. A `docker compose pull` is run before the rolling update to download the image once upfront. |
 | `missing` | Only pull the image if it is not already present locally. This is the default behavior. |
 | `never` | Never pull the image. The image must already be available locally. |
+| `build` | Build the image from a Dockerfile instead of pulling. Sets pull to `never` and runs `docker compose build` before the rolling update. Requires a `build` section in the service definition. |
 
 The compose spec value `if_not_present` is treated as `missing`.
 
-The compose spec values `build` and `refresh` are not supported and will produce an error.
+The compose spec value `refresh` is not supported and will produce an error.
+
+### Building Images
+
+The `--build` CLI flag triggers image building for services that have a `build` section in the compose file. When specified, `docker compose build` is run once before the rolling update, and `--build` is passed to all compose commands during deployment.
+
+```yaml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+```
+
+- The `--build` flag is silently ignored for services without a `build` section
+- `pull_policy: build` without a `build` section produces an error
+- `--build` can be combined with `--pull` (they are independent concerns)
+- When building, the pre-pull step is skipped since the image is built locally
 
 ## Script Extensions
 
