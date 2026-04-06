@@ -5,9 +5,9 @@ services:
     deploy:
       replicas: 1
       x-pre-deploy-host-command: |
-        touch /tmp/bats-detached-pre-deploy-started
+        touch /tmp/orch-detached-pre-deploy-started
         sleep 30
-        touch /tmp/bats-detached-pre-deploy-completed
+        touch /tmp/orch-detached-pre-deploy-completed
       x-pre-deploy-host-command-detached: true
       update_config:
         order: start-first

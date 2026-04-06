@@ -11,5 +11,5 @@ services:
         x-pre-stop-host-command: |
           #!/bin/bash
           if [ -n "$$BASH_VERSION" ]; then
-            touch /tmp/bats-shebang-bash-completed
+            touch /tmp/orch-shebang-bash-completed
           fi

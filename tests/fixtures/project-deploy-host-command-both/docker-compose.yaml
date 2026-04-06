@@ -1,8 +1,8 @@
 ---
 x-pre-deploy-host-command: |
-  date +%s%N > /tmp/bats-project-deploy-both-pre-time
+  date +%s%N > /tmp/orch-project-deploy-both-pre-time
 x-post-deploy-host-command: |
-  date +%s%N > /tmp/bats-project-deploy-both-post-time
+  date +%s%N > /tmp/orch-project-deploy-both-post-time
 
 services:
   web:

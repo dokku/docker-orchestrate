@@ -88,43 +88,15 @@ setup_file() {
 }
 
 setup() {
-  rm -f /tmp/bats-detached-*
-  rm -f /tmp/bats-sync-*
-  rm -f /tmp/bats-shebang-*
-  rm -f /tmp/bats-shell-directive-*
-  rm -f /tmp/bats-pre-stop-hooks-*
-  rm -f /tmp/bats-post-start-hooks-*
-  rm -f /tmp/bats-pre-deploy-*
-  rm -f /tmp/bats-post-deploy-*
-  rm -f /tmp/bats-deploy-*
-  rm -f /tmp/bats-project-deploy-*
-  rm -f /tmp/bats-project-pre-deploy-*
-  rm -f /tmp/bats-project-post-deploy-*
-  rm -f /tmp/bats-one-shot-deploy-*
+  rm -f /tmp/orch-*
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure bats-one-shot-pre-deploy bats-one-shot-post-deploy bats-one-shot-failure-aborts bats-one-shot-priority bats-pre-deploy-cmd bats-post-deploy-cmd bats-deploy-both bats-project-pre-deploy bats-project-post-deploy bats-project-deploy-both bats-detached-pre-deploy bats-detached-post-deploy bats-deploy-failure bats-deploy-template bats-pre-deploy-fails bats-deploy-non-detached bats-project-deploy-failure bats-project-pre-deploy-fails bats-deploy-combined bats-one-shot-deploy-cmd; do
-    docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
+  for project in $(docker compose ls -a -q 2>/dev/null | grep "^bats-"); do
+    docker compose -p "$project" down --remove-orphans --volumes --timeout 5 2>/dev/null || true
   done
 
-  docker compose -p bats-shell-directive down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-  docker compose -p bats-pre-stop-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-  docker compose -p bats-post-start-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-
-  rm -f /tmp/bats-detached-*
-  rm -f /tmp/bats-sync-*
-  rm -f /tmp/bats-shebang-*
-  rm -f /tmp/bats-shell-directive-*
-  rm -f /tmp/bats-pre-stop-hooks-*
-  rm -f /tmp/bats-post-start-hooks-*
-  rm -f /tmp/bats-pre-deploy-*
-  rm -f /tmp/bats-post-deploy-*
-  rm -f /tmp/bats-deploy-*
-  rm -f /tmp/bats-project-deploy-*
-  rm -f /tmp/bats-project-pre-deploy-*
-  rm -f /tmp/bats-project-post-deploy-*
-  rm -f /tmp/bats-one-shot-deploy-*
+  rm -f /tmp/orch-*
 }
 
 @test "default" {
@@ -148,16 +120,19 @@ teardown() {
   assert_success
 
   # started marker should exist (command was launched)
-  [ -f /tmp/bats-detached-pre-stop-started ]
+  [ -f /tmp/orch-detached-pre-stop-started ]
 
   # completed marker should NOT exist yet (still running in background)
-  [ ! -f /tmp/bats-detached-pre-stop-completed ]
+  [ ! -f /tmp/orch-detached-pre-stop-completed ]
 
-  # wait for the detached command to finish
-  sleep 7
+  # poll for the detached command to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/orch-detached-pre-stop-completed ] && break
+    sleep 1
+  done
 
   # completed marker should now exist (process ran to completion independently)
-  [ -f /tmp/bats-detached-pre-stop-completed ]
+  [ -f /tmp/orch-detached-pre-stop-completed ]
 }
 
 @test "post-stop host command detached continues running after exit" {
@@ -174,16 +149,19 @@ teardown() {
   assert_success
 
   # started marker should exist (command was launched)
-  [ -f /tmp/bats-detached-post-stop-started ]
+  [ -f /tmp/orch-detached-post-stop-started ]
 
   # completed marker should NOT exist yet (still running in background)
-  [ ! -f /tmp/bats-detached-post-stop-completed ]
+  [ ! -f /tmp/orch-detached-post-stop-completed ]
 
-  # wait for the detached command to finish
-  sleep 7
+  # poll for the detached command to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/orch-detached-post-stop-completed ] && break
+    sleep 1
+  done
 
   # completed marker should now exist (process ran to completion independently)
-  [ -f /tmp/bats-detached-post-stop-completed ]
+  [ -f /tmp/orch-detached-post-stop-completed ]
 }
 
 @test "both pre-stop and post-stop detached commands continue running after exit" {
@@ -200,19 +178,22 @@ teardown() {
   assert_success
 
   # both started markers should exist
-  [ -f /tmp/bats-detached-both-pre-started ]
-  [ -f /tmp/bats-detached-both-post-started ]
+  [ -f /tmp/orch-detached-both-pre-started ]
+  [ -f /tmp/orch-detached-both-post-started ]
 
   # neither completed marker should exist yet
-  [ ! -f /tmp/bats-detached-both-pre-completed ]
-  [ ! -f /tmp/bats-detached-both-post-completed ]
+  [ ! -f /tmp/orch-detached-both-pre-completed ]
+  [ ! -f /tmp/orch-detached-both-post-completed ]
 
-  # wait for the detached commands to finish
-  sleep 7
+  # poll for both detached commands to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/orch-detached-both-pre-completed ] && [ -f /tmp/orch-detached-both-post-completed ] && break
+    sleep 1
+  done
 
   # both completed markers should now exist
-  [ -f /tmp/bats-detached-both-pre-completed ]
-  [ -f /tmp/bats-detached-both-post-completed ]
+  [ -f /tmp/orch-detached-both-pre-completed ]
+  [ -f /tmp/orch-detached-both-post-completed ]
 }
 
 @test "non-detached commands complete before exit" {
@@ -230,10 +211,10 @@ teardown() {
 
   # both started AND completed markers should exist immediately
   # because synchronous commands block until done
-  [ -f /tmp/bats-sync-pre-started ]
-  [ -f /tmp/bats-sync-pre-completed ]
-  [ -f /tmp/bats-sync-post-started ]
-  [ -f /tmp/bats-sync-post-completed ]
+  [ -f /tmp/orch-sync-pre-started ]
+  [ -f /tmp/orch-sync-pre-completed ]
+  [ -f /tmp/orch-sync-post-started ]
+  [ -f /tmp/orch-sync-post-completed ]
 }
 
 @test "shebang sh executes correctly" {
@@ -249,7 +230,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  [ -f /tmp/bats-shebang-sh-completed ]
+  [ -f /tmp/orch-shebang-sh-completed ]
 }
 
 @test "shebang bash executes correctly" {
@@ -266,7 +247,7 @@ teardown() {
   assert_success
 
   # marker is only created if BASH_VERSION is set, proving bash ran
-  [ -f /tmp/bats-shebang-bash-completed ]
+  [ -f /tmp/orch-shebang-bash-completed ]
 }
 
 @test "shebang dash executes correctly" {
@@ -282,7 +263,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  [ -f /tmp/bats-shebang-dash-completed ]
+  [ -f /tmp/orch-shebang-dash-completed ]
 }
 
 @test "shebang python3 executes correctly" {
@@ -299,7 +280,7 @@ teardown() {
   assert_success
 
   # marker is created via python3 pathlib, proving python3 ran
-  [ -f /tmp/bats-shebang-python3-completed ]
+  [ -f /tmp/orch-shebang-python3-completed ]
 }
 
 @test "default shebang uses sh" {
@@ -316,7 +297,7 @@ teardown() {
   assert_success
 
   # no shebang in script, should default to #!/bin/sh
-  [ -f /tmp/bats-shebang-default-completed ]
+  [ -f /tmp/orch-shebang-default-completed ]
 }
 
 @test "SHELL directive /bin/bash -c is detected for container scripts" {
@@ -336,7 +317,7 @@ teardown() {
   assert_success
 
   # verify host command ran
-  [ -f /tmp/bats-shell-directive-host-completed ]
+  [ -f /tmp/orch-shell-directive-host-completed ]
 
   # check that the container script ran at all
   run docker run --rm -v bats-shell-directive_shell-test:/data nginx:latest cat /data/executed
@@ -430,8 +411,8 @@ teardown() {
   assert_success
 
   # Verify host commands ran
-  [ -f /tmp/bats-pre-stop-hooks-host-completed ]
-  [ -f /tmp/bats-pre-stop-hooks-post-completed ]
+  [ -f /tmp/orch-pre-stop-hooks-host-completed ]
+  [ -f /tmp/orch-pre-stop-hooks-post-completed ]
 
   # Verify x-pre-stop-command ran inside container
   run docker run --rm -v bats-pre-stop-hooks_hook-test:/data nginx:latest cat /data/pre-stop-cmd
@@ -823,7 +804,7 @@ teardown() {
   assert_success
 
   # pre-deploy marker should exist
-  [ -f /tmp/bats-pre-deploy-started ]
+  [ -f /tmp/orch-pre-deploy-started ]
 }
 
 @test "per-service post-deploy host command runs after successful deploy" {
@@ -835,7 +816,7 @@ teardown() {
   assert_success
 
   # post-deploy marker should exist
-  [ -f /tmp/bats-post-deploy-completed ]
+  [ -f /tmp/orch-post-deploy-completed ]
 }
 
 @test "both per-service pre and post deploy host commands run in correct order" {
@@ -847,11 +828,11 @@ teardown() {
   assert_success
 
   # both markers should exist
-  [ -f /tmp/bats-deploy-both-pre-time ]
-  [ -f /tmp/bats-deploy-both-post-time ]
+  [ -f /tmp/orch-deploy-both-pre-time ]
+  [ -f /tmp/orch-deploy-both-post-time ]
 
-  pre_time=$(cat /tmp/bats-deploy-both-pre-time)
-  post_time=$(cat /tmp/bats-deploy-both-post-time)
+  pre_time=$(cat /tmp/orch-deploy-both-pre-time)
+  post_time=$(cat /tmp/orch-deploy-both-post-time)
   if [[ "$pre_time" -gt "$post_time" ]]; then
     flunk "expected pre-deploy (${pre_time}) to run before post-deploy (${post_time})"
   fi
@@ -870,7 +851,7 @@ teardown() {
   assert_success
 
   # project pre-deploy marker should exist
-  [ -f /tmp/bats-project-pre-deploy-started ]
+  [ -f /tmp/orch-project-pre-deploy-started ]
 }
 
 @test "project-level post-deploy host command runs after successful deploy" {
@@ -882,7 +863,7 @@ teardown() {
   assert_success
 
   # project post-deploy marker should exist
-  [ -f /tmp/bats-project-post-deploy-completed ]
+  [ -f /tmp/orch-project-post-deploy-completed ]
 }
 
 @test "both project-level pre and post deploy host commands run in correct order" {
@@ -894,11 +875,11 @@ teardown() {
   assert_success
 
   # both markers should exist
-  [ -f /tmp/bats-project-deploy-both-pre-time ]
-  [ -f /tmp/bats-project-deploy-both-post-time ]
+  [ -f /tmp/orch-project-deploy-both-pre-time ]
+  [ -f /tmp/orch-project-deploy-both-post-time ]
 
-  pre_time=$(cat /tmp/bats-project-deploy-both-pre-time)
-  post_time=$(cat /tmp/bats-project-deploy-both-post-time)
+  pre_time=$(cat /tmp/orch-project-deploy-both-pre-time)
+  post_time=$(cat /tmp/orch-project-deploy-both-post-time)
   if [[ "$pre_time" -gt "$post_time" ]]; then
     flunk "expected project pre-deploy (${pre_time}) to run before project post-deploy (${post_time})"
   fi
@@ -917,7 +898,7 @@ teardown() {
   assert_failure
 
   # post-deploy marker should NOT exist (deploy failed)
-  [ ! -f /tmp/bats-deploy-failure-post-deploy ]
+  [ ! -f /tmp/orch-deploy-failure-post-deploy ]
 }
 
 @test "per-service pre-deploy host command failure aborts deployment" {
@@ -943,7 +924,7 @@ teardown() {
   assert_failure
 
   # project post-deploy marker should NOT exist (service deploy failed)
-  [ ! -f /tmp/bats-project-deploy-failure-post-deploy ]
+  [ ! -f /tmp/orch-project-deploy-failure-post-deploy ]
 }
 
 @test "project-level pre-deploy host command failure aborts all deployments" {
@@ -973,10 +954,10 @@ teardown() {
   assert_success
 
   # started marker should exist (command was launched)
-  [ -f /tmp/bats-detached-pre-deploy-started ]
+  [ -f /tmp/orch-detached-pre-deploy-started ]
 
   # completed marker should NOT exist yet (sleep 30 in script, deploy finishes faster)
-  [ ! -f /tmp/bats-detached-pre-deploy-completed ]
+  [ ! -f /tmp/orch-detached-pre-deploy-completed ]
 }
 
 @test "post-deploy host command detached does not block deployment" {
@@ -1013,7 +994,7 @@ teardown() {
   # This is the key test for issue #80: without the fix, this marker may not
   # exist because the goroutine that forks the process may not execute before
   # the main process exits.
-  [ -f /tmp/bats-detached-post-deploy-started ]
+  [ -f /tmp/orch-detached-post-deploy-started ]
 }
 
 # =====================================================
@@ -1029,12 +1010,12 @@ teardown() {
   assert_success
 
   # both pre-deploy started and completed markers should exist (synchronous)
-  [ -f /tmp/bats-deploy-non-detached-pre-started ]
-  [ -f /tmp/bats-deploy-non-detached-pre-completed ]
+  [ -f /tmp/orch-deploy-non-detached-pre-started ]
+  [ -f /tmp/orch-deploy-non-detached-pre-completed ]
 
   # both post-deploy started and completed markers should exist (synchronous)
-  [ -f /tmp/bats-deploy-non-detached-post-started ]
-  [ -f /tmp/bats-deploy-non-detached-post-completed ]
+  [ -f /tmp/orch-deploy-non-detached-post-started ]
+  [ -f /tmp/orch-deploy-non-detached-post-completed ]
 }
 
 # =====================================================
@@ -1050,13 +1031,13 @@ teardown() {
   assert_success
 
   # verify service name was expanded
-  [ -f /tmp/bats-deploy-template-service ]
-  service_name=$(cat /tmp/bats-deploy-template-service | tr -d '[:space:]')
+  [ -f /tmp/orch-deploy-template-service ]
+  service_name=$(cat /tmp/orch-deploy-template-service | tr -d '[:space:]')
   assert_equal "web" "$service_name"
 
   # verify project name was expanded
-  [ -f /tmp/bats-deploy-template-project ]
-  project_name=$(cat /tmp/bats-deploy-template-project | tr -d '[:space:]')
+  [ -f /tmp/orch-deploy-template-project ]
+  project_name=$(cat /tmp/orch-deploy-template-project | tr -d '[:space:]')
   assert_equal "bats-deploy-template" "$project_name"
 }
 
@@ -1073,15 +1054,15 @@ teardown() {
   assert_success
 
   # all four markers should exist
-  [ -f /tmp/bats-deploy-combined-project-pre-time ]
-  [ -f /tmp/bats-deploy-combined-service-pre-time ]
-  [ -f /tmp/bats-deploy-combined-service-post-time ]
-  [ -f /tmp/bats-deploy-combined-project-post-time ]
+  [ -f /tmp/orch-deploy-combined-project-pre-time ]
+  [ -f /tmp/orch-deploy-combined-service-pre-time ]
+  [ -f /tmp/orch-deploy-combined-service-post-time ]
+  [ -f /tmp/orch-deploy-combined-project-post-time ]
 
-  project_pre=$(cat /tmp/bats-deploy-combined-project-pre-time)
-  service_pre=$(cat /tmp/bats-deploy-combined-service-pre-time)
-  service_post=$(cat /tmp/bats-deploy-combined-service-post-time)
-  project_post=$(cat /tmp/bats-deploy-combined-project-post-time)
+  project_pre=$(cat /tmp/orch-deploy-combined-project-pre-time)
+  service_pre=$(cat /tmp/orch-deploy-combined-service-pre-time)
+  service_post=$(cat /tmp/orch-deploy-combined-service-post-time)
+  project_post=$(cat /tmp/orch-deploy-combined-project-post-time)
 
   # verify order: project-pre -> service-pre -> service-post -> project-post
   if [[ "$project_pre" -gt "$service_pre" ]]; then
@@ -1108,8 +1089,8 @@ teardown() {
   assert_success
 
   # Both pre and post deploy markers should exist
-  [ -f /tmp/bats-one-shot-deploy-pre ]
-  [ -f /tmp/bats-one-shot-deploy-post ]
+  [ -f /tmp/orch-one-shot-deploy-pre ]
+  [ -f /tmp/orch-one-shot-deploy-post ]
 
   # One-shot should have completed
   assert_output_contains "One-shot service migrate completed successfully"

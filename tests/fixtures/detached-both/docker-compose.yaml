@@ -9,12 +9,12 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-host-command: |
-          touch /tmp/bats-detached-both-pre-started
-          sleep 5
-          touch /tmp/bats-detached-both-pre-completed
+          touch /tmp/orch-detached-both-pre-started
+          sleep 15
+          touch /tmp/orch-detached-both-pre-completed
         x-pre-stop-host-command-detached: true
         x-post-stop-host-command: |
-          touch /tmp/bats-detached-both-post-started
-          sleep 5
-          touch /tmp/bats-detached-both-post-completed
+          touch /tmp/orch-detached-both-post-started
+          sleep 15
+          touch /tmp/orch-detached-both-post-completed
         x-post-stop-host-command-detached: true

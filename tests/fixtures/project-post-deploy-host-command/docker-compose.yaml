@@ -1,6 +1,6 @@
 ---
 x-post-deploy-host-command: |
-  touch /tmp/bats-project-post-deploy-completed
+  touch /tmp/orch-project-post-deploy-completed
 
 services:
   web:

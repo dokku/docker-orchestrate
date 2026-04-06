@@ -9,4 +9,4 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-host-command: |
-          touch /tmp/bats-shebang-default-completed
+          touch /tmp/orch-shebang-default-completed
