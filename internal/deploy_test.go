@@ -3281,7 +3281,7 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				operationOrder = append(operationOrder, "pre-deploy-script")
 			} else {
 				operationOrder = append(operationOrder, "docker-compose")
@@ -3334,7 +3334,7 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3394,7 +3394,7 @@ func TestDeployServicePostDeployHostCommand(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				postDeployRan = true
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3445,7 +3445,7 @@ func TestDeployServicePostDeployHostCommand(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				postDeployRan = true
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3497,7 +3497,7 @@ func TestDeployOneShotServiceDeployHooks(t *testing.T) {
 		var scriptCount int
 		mockClient := &mockDockerClient{}
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				scriptCount++
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3541,7 +3541,7 @@ func TestDeployOneShotServiceDeployHooks(t *testing.T) {
 		var scriptCount int
 		mockClient := &mockDockerClient{}
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				scriptCount++
 				return ExecCommandResponse{ExitCode: 0}, nil
 			}
@@ -3603,7 +3603,7 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				operationOrder = append(operationOrder, "script")
 			} else {
 				operationOrder = append(operationOrder, "docker-compose")
@@ -3658,7 +3658,7 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3708,7 +3708,7 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if strings.HasSuffix(input.Command, ".script") {
+			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				scriptCount++
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil

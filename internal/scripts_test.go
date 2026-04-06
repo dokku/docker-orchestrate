@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -61,8 +60,9 @@ func TestRunHostScript(t *testing.T) {
 		executorCalled := false
 		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
 			executorCalled = true
-			if !strings.Contains(input.Command, "test-script-") {
-				// The prefix in CreateTemp is input.ScriptType + "-"
+			// Script without shebang defaults to /bin/sh -c
+			if input.Command != "/bin/sh" {
+				return ExecCommandResponse{}, errors.New("expected /bin/sh command")
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
@@ -106,10 +106,12 @@ func TestRunHostScript(t *testing.T) {
 			},
 		}
 
-		var executedCommand string
+		var scriptContent string
 		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			content, _ := os.ReadFile(input.Command)
-			executedCommand = string(content)
+			// For shell scripts, the script content is the last arg after -c
+			if len(input.Args) >= 2 && input.Args[0] == "-c" {
+				scriptContent = input.Args[1]
+			}
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
@@ -127,9 +129,9 @@ func TestRunHostScript(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		expected := "#!/bin/sh\necho 12345678901234567890 172.17.0.2 123456789012 web"
-		if !strings.Contains(executedCommand, expected) {
-			t.Errorf("expected command to contain %q, got %q", expected, executedCommand)
+		expected := "echo 12345678901234567890 172.17.0.2 123456789012 web"
+		if !strings.Contains(scriptContent, expected) {
+			t.Errorf("expected script content to contain %q, got %q", expected, scriptContent)
 		}
 	})
 
@@ -148,10 +150,11 @@ func TestRunHostScript(t *testing.T) {
 			},
 		}
 
-		var executedCommand string
+		var scriptContent string
 		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			content, _ := os.ReadFile(input.Command)
-			executedCommand = string(content)
+			if len(input.Args) >= 2 && input.Args[0] == "-c" {
+				scriptContent = input.Args[1]
+			}
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
@@ -170,9 +173,9 @@ func TestRunHostScript(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		expected := "#!/bin/sh\necho myproject web"
-		if !strings.Contains(executedCommand, expected) {
-			t.Errorf("expected command to contain %q, got %q", expected, executedCommand)
+		expected := "echo myproject web"
+		if !strings.Contains(scriptContent, expected) {
+			t.Errorf("expected script content to contain %q, got %q", expected, scriptContent)
 		}
 	})
 
@@ -287,7 +290,7 @@ func TestRunHostScript(t *testing.T) {
 		}
 	})
 
-	t.Run("detached execution", func(t *testing.T) {
+	t.Run("detached execution passes detached flag", func(t *testing.T) {
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
@@ -298,11 +301,11 @@ func TestRunHostScript(t *testing.T) {
 			},
 		}
 
-		executorCalled := make(chan bool, 1)
+		var receivedDetached bool
+		executorCalled := false
 		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			executorCalled <- true
-			// Simulate a long-running command
-			time.Sleep(100 * time.Millisecond)
+			executorCalled = true
+			receivedDetached = input.Detached
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
@@ -316,32 +319,21 @@ func TestRunHostScript(t *testing.T) {
 			Detached:    true,
 		}
 
-		start := time.Now()
 		err := runHostScript(ctx, input)
-		duration := time.Since(start)
-
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 
-		// Detached execution should return immediately (much faster than the command duration)
-		if duration > 50*time.Millisecond {
-			t.Errorf("detached execution should return immediately, took %v", duration)
+		if !executorCalled {
+			t.Error("expected executor to be called in detached mode")
 		}
 
-		// Wait a bit to ensure the goroutine has a chance to execute
-		time.Sleep(150 * time.Millisecond)
-
-		// Check that executor was called
-		select {
-		case <-executorCalled:
-			// Good, executor was called
-		default:
-			t.Error("expected executor to be called in detached mode")
+		if !receivedDetached {
+			t.Error("expected executor to receive Detached=true")
 		}
 	})
 
-	t.Run("detached execution with background context", func(t *testing.T) {
+	t.Run("detached execution uses background context", func(t *testing.T) {
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
@@ -352,15 +344,14 @@ func TestRunHostScript(t *testing.T) {
 			},
 		}
 
-		executorCtx := make(chan context.Context, 1)
+		var receivedCtx context.Context
 		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			executorCtx <- ctx
+			receivedCtx = ctx
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
-		// Create a cancellable context
+		// Create a cancellable context and cancel it before calling
 		cancelCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
 		input := runScriptInput{
 			Client:      mockClient,
@@ -377,25 +368,177 @@ func TestRunHostScript(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 
-		// Cancel the context
+		// Cancel the original context
 		cancel()
 
-		// Wait a bit to ensure the goroutine has a chance to execute
-		time.Sleep(50 * time.Millisecond)
+		// The executor should have received a background context, not the cancelled one
+		if receivedCtx == cancelCtx {
+			t.Error("expected executor to use background context, not the caller's context")
+		}
+		// Background context should not be cancelled
+		if receivedCtx.Err() != nil {
+			t.Errorf("expected background context to not be cancelled, got: %v", receivedCtx.Err())
+		}
+	})
 
-		// Check that executor was called with background context (not the cancelled one)
-		select {
-		case ctx := <-executorCtx:
-			// The context should be background context, not the cancelled one
-			if ctx == cancelCtx {
-				t.Error("expected executor to use background context, not the cancelled context")
+	t.Run("detached execution returns error on start failure", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, errors.New("start failed")
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			ServiceName: "test-service",
+			Script:      "echo hello",
+			ScriptType:  "test-script",
+			Detached:    true,
+		}
+
+		err := runHostScript(ctx, input)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "error starting detached") {
+			t.Errorf("expected 'error starting detached' in error, got: %v", err)
+		}
+	})
+
+	t.Run("shell script uses -c flag", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		var receivedCommand string
+		var receivedArgs []string
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			receivedCommand = input.Command
+			receivedArgs = input.Args
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			Script:      "#!/bin/bash\necho hello",
+			ScriptType:  "test-script",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if receivedCommand != "/bin/bash" {
+			t.Errorf("expected command '/bin/bash', got %q", receivedCommand)
+		}
+		if len(receivedArgs) != 2 || receivedArgs[0] != "-c" {
+			t.Errorf("expected args [-c, <script>], got %v", receivedArgs)
+		}
+		if !strings.Contains(receivedArgs[1], "echo hello") {
+			t.Errorf("expected script content in args, got %q", receivedArgs[1])
+		}
+	})
+
+	t.Run("non-shell script uses stdin", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		var receivedCommand string
+		var receivedStdin io.Reader
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			receivedCommand = input.Command
+			receivedStdin = input.Stdin
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			Script:      "#!/usr/bin/python3\nprint('hello')",
+			ScriptType:  "test-script",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if receivedCommand != "/usr/bin/python3" {
+			t.Errorf("expected command '/usr/bin/python3', got %q", receivedCommand)
+		}
+		if receivedStdin == nil {
+			t.Fatal("expected stdin to be set for non-shell interpreter")
+		}
+		stdinContent, _ := io.ReadAll(receivedStdin)
+		if !strings.Contains(string(stdinContent), "print('hello')") {
+			t.Errorf("expected stdin to contain script, got %q", string(stdinContent))
+		}
+	})
+
+	t.Run("shebang is stripped from script content", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+		}
+
+		var scriptContent string
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) >= 2 && input.Args[0] == "-c" {
+				scriptContent = input.Args[1]
 			}
-			// Background context should not be cancelled
-			if ctx.Err() != nil {
-				t.Errorf("expected background context to not be cancelled, got: %v", ctx.Err())
-			}
-		default:
-			t.Error("expected executor to be called in detached mode")
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "test-container-id",
+			Executor:    executor,
+			Script:      "#!/bin/sh\necho hello\necho world",
+			ScriptType:  "test-script",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if strings.Contains(scriptContent, "#!/bin/sh") {
+			t.Errorf("expected shebang to be stripped, got %q", scriptContent)
+		}
+		if !strings.Contains(scriptContent, "echo hello") {
+			t.Errorf("expected script body to be preserved, got %q", scriptContent)
 		}
 	})
 

@@ -425,6 +425,7 @@ x-pre-deploy-host-command-detached: true
 x-post-deploy-host-command-detached: true
 ```
 
+- Detached commands are guaranteed to be started (forked) before the deploy command returns
 - Detached commands run in the background and do not block deployment
 - Detached commands continue running even if `docker-orchestrate` exits
 - Only boolean values (`true` or `false`) are allowed
@@ -657,6 +658,7 @@ services:
         x-post-stop-host-command-detached: true
 ```
 
+- Detached commands are guaranteed to be started (forked) before the deploy command returns
 - Detached commands run in the background and do not block deployment
 - Detached commands continue running even if `docker-orchestrate` exits or is interrupted
 - Only boolean values (`true` or `false`) are allowed
