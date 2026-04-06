@@ -1224,3 +1224,34 @@ teardown() {
   assert_success
   [[ "$output" != *"has anonymous volume"* ]]
 }
+
+@test "anonymous volumes are cleaned up on container removal" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/anonymous-volume-warning"
+
+  # Deploy to create a container with an anonymous volume
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-anon-vol-cleanup web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Get the container ID and its anonymous volume name
+  container_id=$(docker ps --filter "label=com.docker.compose.project=bats-anon-vol-cleanup" -q | head -1)
+  anon_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}{{end}}{{end}}' "$container_id")
+  [ -n "$anon_volume" ]
+
+  # Verify the volume exists
+  run docker volume inspect "$anon_volume"
+  assert_success
+
+  # Redeploy with --force to trigger rolling update (ContainerTerminate removes old container)
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-anon-vol-cleanup --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # The old anonymous volume should have been removed
+  run docker volume inspect "$anon_volume"
+  echo "volume inspect output: $output"
+  echo "volume inspect status: $status"
+  [ "$status" -ne 0 ]
+}

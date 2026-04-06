@@ -357,7 +357,7 @@ When a Dockerfile declares `VOLUME /var/lib/data` and the compose file does not 
 
 1. Each new container gets a fresh, empty anonymous volume
 2. During rolling updates, data from old containers' anonymous volumes is **not** transferred to new containers
-3. Old anonymous volumes become orphaned, accumulating on disk
+3. Old anonymous volumes are automatically removed when `docker-orchestrate` removes the old container, but the data they contained is lost
 
 ### How to Fix
 

@@ -300,7 +300,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 
 		input.Logger.LogHeader2(fmt.Sprintf("Removing non-running container %s (state=%s)", containerName, c.State))
-		if err := input.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{}); err != nil {
+		if err := input.Client.ContainerRemove(ctx, c.ID, container.RemoveOptions{RemoveVolumes: true}); err != nil {
 			input.Logger.Warn(fmt.Sprintf("Failed to remove container %s: %v", containerName, err))
 		}
 	}
