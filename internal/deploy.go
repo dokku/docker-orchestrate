@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -570,6 +571,9 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			return fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
 		}
 	}
+
+	// Warn about anonymous volumes that will lose data during rolling updates
+	warnAnonymousVolumes(ctx, input.Client, input.Logger, input.ProjectName, input.ServiceName, service)
 
 	// Get current running containers
 	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
@@ -1228,4 +1232,33 @@ func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 
 	input.Logger.Info(fmt.Sprintf("One-shot service %s completed successfully", input.ServiceName))
 	return nil
+}
+
+// warnAnonymousVolumes inspects the service image for VOLUME directives and warns
+// about any that don't have corresponding named volume or bind mounts in the compose file.
+// This is non-blocking: if the image cannot be inspected, the check is silently skipped.
+func warnAnonymousVolumes(ctx context.Context, client DockerClientInterface, logger *command.ZerologUi, projectName string, serviceName string, service *types.ServiceConfig) {
+	imageName := api.GetImageNameOrDefault(*service, projectName)
+
+	imageInspect, err := client.ImageInspect(ctx, imageName)
+	if err != nil {
+		return
+	}
+
+	if imageInspect.Config == nil || len(imageInspect.Config.Volumes) == 0 {
+		return
+	}
+
+	coveredPaths := make(map[string]bool)
+	for _, v := range service.Volumes {
+		if v.Type == "bind" || (v.Type == "volume" && v.Source != "") {
+			coveredPaths[v.Target] = true
+		}
+	}
+
+	for _, volumePath := range slices.Sorted(maps.Keys(imageInspect.Config.Volumes)) {
+		if !coveredPaths[volumePath] {
+			logger.Warn(fmt.Sprintf("service '%s' has anonymous volume at %s — data will be lost during rolling updates. Use a named volume.", serviceName, volumePath))
+		}
+	}
 }

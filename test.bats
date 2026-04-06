@@ -1204,3 +1204,23 @@ teardown() {
   assert_success
   assert_output_contains "Skipping unchanged service"
 }
+
+@test "anonymous volume warning shown during deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/anonymous-volume-warning"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-anon-vol web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "has anonymous volume at /var/lib/test-data"
+}
+
+@test "no anonymous volume warning with named volume" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/anonymous-volume-warning-named"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-anon-vol-named web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  [[ "$output" != *"has anonymous volume"* ]]
+}
