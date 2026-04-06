@@ -88,7 +88,7 @@ func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID strin
 		return fmt.Errorf("error stopping container: %v", err)
 	}
 
-	if err := d.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{}); err != nil {
+	if err := d.cli.ContainerRemove(ctx, containerID, container.RemoveOptions{RemoveVolumes: true}); err != nil {
 		return fmt.Errorf("error removing container: %v", err)
 	}
 

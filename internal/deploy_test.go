@@ -346,6 +346,9 @@ func TestDeployServiceCleansUpNonRunningContainers(t *testing.T) {
 				},
 				containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
 					removedIDs = append(removedIDs, id)
+					if !options.RemoveVolumes {
+						t.Errorf("expected RemoveVolumes=true for container %s, got false", id)
+					}
 					return tt.removeError
 				},
 			}
