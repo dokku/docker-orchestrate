@@ -180,6 +180,72 @@ services:
     # This service will be deployed normally
 ```
 
+## One-Shot Services
+
+Services with `restart: "no"` are treated as one-shot services. One-shot services run to completion and are not subject to scaling, healthchecks, or rolling updates. They are useful for migration scripts, seed data operations, or any task that should run once and exit.
+
+### Detection
+
+A service is detected as one-shot when its `restart` field is set to `"no"` in the compose file.
+
+### Behavior
+
+- One-shot services run via `docker compose run --rm --no-deps <service>`, which starts the service, waits for it to complete, and removes the container
+- If the service exits with a non-zero code, deployment aborts immediately — no subsequent services are deployed
+- Image pull policy and build flags are respected (images are pulled/built before running)
+- Dependency ordering is respected via the standard `depends_on` mechanism
+- One-shot services without `depends_on` always run before long-running services (including `web`)
+- One-shot services do not undergo rolling updates, scaling, healthchecks, or container renaming
+- The `--replicas` flag has no effect on one-shot services
+
+### Pre-Deploy One-Shot (Migrations)
+
+One-shot services that should run before your application can use `depends_on` to express ordering:
+
+```yaml
+services:
+  db:
+    image: postgres:16
+  migrate:
+    image: myapp:latest
+    command: ["./migrate", "up"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    image: myapp:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+```
+
+In this example, `migrate` runs as a one-shot after `db` is healthy, and `web` only deploys after `migrate` completes successfully. One-shot services without `depends_on` also run before long-running services by default.
+
+### Post-Deploy One-Shot (Cache Warming)
+
+One-shot services can also run after other services by depending on them:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+  warm-cache:
+    image: myapp:latest
+    command: ["./warm-cache"]
+    restart: "no"
+    depends_on:
+      web:
+        condition: service_healthy
+```
+
+Here, `warm-cache` runs after `web`'s deployment completes (including healthchecks and scaling). The `condition` field documents the intent; `docker-orchestrate` ensures ordering via the dependency graph.
+
 ## Container Stop Grace Period
 
 `docker-orchestrate` respects the compose spec's `stop_grace_period` field when terminating containers during rolling updates, scale-down operations, or service removal. This controls how long Docker waits for a container to stop gracefully before forcefully killing it.

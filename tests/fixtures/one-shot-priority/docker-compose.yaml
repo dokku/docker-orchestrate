@@ -1,0 +1,8 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["sh", "-c", "echo priority-migration"]
+    restart: "no"
+  web:
+    image: nginx:latest

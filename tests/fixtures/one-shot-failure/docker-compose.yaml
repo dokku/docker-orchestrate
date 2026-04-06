@@ -1,0 +1,6 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["sh", "-c", "exit 1"]
+    restart: "no"

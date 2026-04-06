@@ -1,0 +1,11 @@
+---
+services:
+  web:
+    image: nginx:latest
+  warm-cache:
+    image: nginx:latest
+    command: ["sh", "-c", "echo cache-warmed"]
+    restart: "no"
+    depends_on:
+      web:
+        condition: service_healthy
