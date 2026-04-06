@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure bats-one-shot-pre-deploy bats-one-shot-post-deploy bats-one-shot-failure-aborts bats-one-shot-priority; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -691,6 +691,106 @@ teardown() {
   assert_success
 
   # No containers should be running (--rm removes them)
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-success" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "" "$output"
+}
+
+@test "one-shot pre-deploy runs migrate before web in project deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-pre-deploy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-pre-deploy
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # One-shot migrate should have completed
+  assert_output_contains "One-shot service migrate completed successfully"
+
+  # Web should be running
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-pre-deploy" --filter "label=com.docker.compose.service=web" --filter "status=running" -q
+  echo "web running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  # Migrate should have no running containers (--rm removed it)
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-pre-deploy" --filter "label=com.docker.compose.service=migrate" --filter "status=running" -q
+  echo "migrate running containers: $output"
+  assert_equal "" "$output"
+}
+
+@test "one-shot post-deploy runs warm-cache after web in project deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-post-deploy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-post-deploy
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # warm-cache one-shot should have completed (check before other run commands overwrite $output)
+  assert_output_contains "One-shot service warm-cache completed successfully"
+
+  # Web should be running
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-post-deploy" --filter "label=com.docker.compose.service=web" --filter "status=running" -q
+  echo "web running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+
+  # warm-cache should have no running containers
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-post-deploy" --filter "label=com.docker.compose.service=warm-cache" --filter "status=running" -q
+  echo "warm-cache running containers: $output"
+  assert_equal "" "$output"
+}
+
+@test "one-shot failure aborts deployment of subsequent services" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-failure-aborts"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-failure-aborts
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+
+  # Web should NOT be running (deployment aborted before reaching it)
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-failure-aborts" --filter "label=com.docker.compose.service=web" --filter "status=running" -q
+  echo "web running containers: $output"
+  assert_equal "" "$output"
+}
+
+@test "one-shot without depends_on runs before web without depends_on in project deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-priority"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-priority
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # One-shot migrate should have completed
+  assert_output_contains "One-shot service migrate completed successfully"
+
+  # Verify ordering: one-shot message should appear before web deployment message
+  deploy_output="$output"
+  migrate_line=$(echo "$deploy_output" | grep -n "Running one-shot service migrate" | head -1 | cut -d: -f1)
+  web_line=$(echo "$deploy_output" | grep -n "Deploying service web" | head -1 | cut -d: -f1)
+  if [[ "$migrate_line" -ge "$web_line" ]]; then
+    flunk "expected one-shot migrate (line $migrate_line) to run before web deploy (line $web_line)"
+  fi
+
+  # Web should be running
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-priority" --filter "label=com.docker.compose.service=web" --filter "status=running" -q
+  echo "web running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "one-shot service ignores --replicas flag" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-success"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-success --replicas 3 migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # One-shot should complete successfully regardless of --replicas
+  assert_output_contains "One-shot service migrate completed successfully"
+
+  # No containers should be running (--rm removes them, one-shot ignores replicas)
   run docker ps --filter "label=com.docker.compose.project=bats-one-shot-success" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "" "$output"

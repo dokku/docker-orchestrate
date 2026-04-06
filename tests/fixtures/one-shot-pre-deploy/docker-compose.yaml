@@ -1,0 +1,11 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["sh", "-c", "echo migration-complete"]
+    restart: "no"
+  web:
+    image: nginx:latest
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
