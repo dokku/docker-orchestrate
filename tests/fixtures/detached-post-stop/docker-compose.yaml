@@ -10,6 +10,6 @@ services:
         monitor: 5s
         x-post-stop-host-command: |
           touch /tmp/bats-detached-post-stop-started
-          sleep 5
+          sleep 15
           touch /tmp/bats-detached-post-stop-completed
         x-post-stop-host-command-detached: true

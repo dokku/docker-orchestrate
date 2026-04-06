@@ -3838,6 +3838,122 @@ func TestDeployServiceDeployHooksDetached(t *testing.T) {
 	})
 }
 
+func TestDeployServiceStopCommandDetached(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("stop command detached flags are parsed correctly", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Order: "start-first",
+							Extensions: map[string]interface{}{
+								"x-pre-stop-host-command":           "echo pre-stop",
+								"x-post-stop-host-command":          "echo post-stop",
+								"x-pre-stop-host-command-detached":  true,
+								"x-post-stop-host-command-detached": true,
+							},
+						},
+					},
+				},
+			},
+		}
+
+		// Should not error - detached flags should be parsed correctly
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid stop command detached flag produces error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "existing_cont_01", Names: []string{"/bats-web-1"}, State: "running", Created: 100},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+					},
+					NetworkSettings: &container.NetworkSettings{},
+				}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						Replicas: intPtr(1),
+						UpdateConfig: &types.UpdateConfig{
+							Order: "start-first",
+							Extensions: map[string]interface{}{
+								"x-pre-stop-host-command":          "echo pre-stop",
+								"x-pre-stop-host-command-detached": "not-a-bool",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err == nil {
+			t.Fatal("expected error for invalid detached flag")
+		}
+		if !strings.Contains(err.Error(), "must be a boolean") {
+			t.Errorf("expected error to contain 'must be a boolean', got: %v", err)
+		}
+	})
+}
+
 func TestDeployServiceNoDeployConfig(t *testing.T) {
 	var buf bytes.Buffer
 	logger := &command.ZerologUi{

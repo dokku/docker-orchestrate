@@ -728,6 +728,74 @@ func TestRollingUpdateBatchStopFirst(t *testing.T) {
 			t.Errorf("expected 1 failure, got %d", output.Failures)
 		}
 	})
+
+	t.Run("detached pre-stop and post-stop flags passed through", func(t *testing.T) {
+		detachedCount := 0
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "existing1_container", Created: 100},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "existing1_container", Created: 100},
+					{ID: "new1_container_id00", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State:      &container.State{Running: true},
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.Detached {
+				detachedCount++
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id00", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:                      mock,
+			Executor:                    executor,
+			Logger:                      logger,
+			ProjectName:                 "proj",
+			ServiceName:                 "web",
+			Parallelism:                 1,
+			MaxFailureRatio:             0,
+			ContainersToUpdate:          batch,
+			StopTimeout:                 10,
+			TickerCh:                    testTickerCh(),
+			PreStopHostCommand:          "echo pre-stop",
+			PreStopHostCommandDetached:  true,
+			PostStopHostCommand:         "echo post-stop",
+			PostStopHostCommandDetached: true,
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if detachedCount != 2 {
+			t.Errorf("expected 2 detached executor calls (pre-stop + post-stop), got %d", detachedCount)
+		}
+	})
 }
 
 func testTickerCh() <-chan time.Time {
@@ -1060,6 +1128,74 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 			t.Errorf("expected 1 failure, got %d", output.Failures)
 		}
 	})
+
+	t.Run("detached pre-stop and post-stop flags passed through", func(t *testing.T) {
+		detachedCount := 0
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id00", Created: 50},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id00", Created: 50},
+					{ID: "new1_container_id00", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State:      &container.State{Running: true},
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.Detached {
+				detachedCount++
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id00", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:                      mock,
+			Executor:                    executor,
+			Logger:                      logger,
+			ProjectName:                 "proj",
+			ServiceName:                 "web",
+			Parallelism:                 1,
+			MaxFailureRatio:             0,
+			ContainersToUpdate:          batch,
+			StopTimeout:                 10,
+			TickerCh:                    testTickerCh(),
+			PreStopHostCommand:          "echo pre-stop",
+			PreStopHostCommandDetached:  true,
+			PostStopHostCommand:         "echo post-stop",
+			PostStopHostCommandDetached: true,
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if detachedCount != 2 {
+			t.Errorf("expected 2 detached executor calls (pre-stop + post-stop), got %d", detachedCount)
+		}
+	})
 }
 
 func TestScaleDownContainers(t *testing.T) {
@@ -1174,6 +1310,171 @@ func TestScaleDownContainers(t *testing.T) {
 		}
 		if capturedTimeout != 30 {
 			t.Errorf("expected timeout 30, got %d", capturedTimeout)
+		}
+	})
+
+	t.Run("pre-stop host command detached flag is passed through", func(t *testing.T) {
+		var capturedDetached []bool
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedDetached = append(capturedDetached, input.Detached)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		containers := []container.Summary{
+			{ID: "id1_oldest_container", Created: 100},
+			{ID: "id2_newest_container", Created: 200},
+		}
+
+		input := ScaleDownContainersInput{
+			Client:                     mock,
+			CurrentContainers:          containers,
+			CurrentReplicas:            2,
+			DesiredReplicas:            1,
+			Executor:                   executor,
+			Logger:                     logger,
+			ProjectName:                "proj",
+			ServiceName:                "web",
+			StopTimeout:                10,
+			PreStopHostCommand:         "echo pre-stop",
+			PreStopHostCommandDetached: true,
+		}
+
+		err := scaleDownContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		hasDetached := false
+		for _, d := range capturedDetached {
+			if d {
+				hasDetached = true
+				break
+			}
+		}
+		if !hasDetached {
+			t.Error("expected executor to receive Detached=true for pre-stop host command")
+		}
+	})
+
+	t.Run("post-stop host command detached flag is passed through", func(t *testing.T) {
+		var capturedDetached []bool
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedDetached = append(capturedDetached, input.Detached)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		containers := []container.Summary{
+			{ID: "id1_oldest_container", Created: 100},
+			{ID: "id2_newest_container", Created: 200},
+		}
+
+		input := ScaleDownContainersInput{
+			Client:                      mock,
+			CurrentContainers:           containers,
+			CurrentReplicas:             2,
+			DesiredReplicas:             1,
+			Executor:                    executor,
+			Logger:                      logger,
+			ProjectName:                 "proj",
+			ServiceName:                 "web",
+			StopTimeout:                 10,
+			PostStopHostCommand:         "echo post-stop",
+			PostStopHostCommandDetached: true,
+		}
+
+		err := scaleDownContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		hasDetached := false
+		for _, d := range capturedDetached {
+			if d {
+				hasDetached = true
+				break
+			}
+		}
+		if !hasDetached {
+			t.Error("expected executor to receive Detached=true for post-stop host command")
+		}
+	})
+
+	t.Run("both pre-stop and post-stop detached flags are passed through", func(t *testing.T) {
+		detachedCount := 0
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						HostConfig: &container.HostConfig{NetworkMode: "host"},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.Detached {
+				detachedCount++
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		containers := []container.Summary{
+			{ID: "id1_oldest_container", Created: 100},
+			{ID: "id2_newest_container", Created: 200},
+		}
+
+		input := ScaleDownContainersInput{
+			Client:                      mock,
+			CurrentContainers:           containers,
+			CurrentReplicas:             2,
+			DesiredReplicas:             1,
+			Executor:                    executor,
+			Logger:                      logger,
+			ProjectName:                 "proj",
+			ServiceName:                 "web",
+			StopTimeout:                 10,
+			PreStopHostCommand:          "echo pre-stop",
+			PreStopHostCommandDetached:  true,
+			PostStopHostCommand:         "echo post-stop",
+			PostStopHostCommandDetached: true,
+		}
+
+		err := scaleDownContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if detachedCount != 2 {
+			t.Errorf("expected 2 detached executor calls, got %d", detachedCount)
 		}
 	})
 }

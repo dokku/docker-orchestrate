@@ -88,43 +88,15 @@ setup_file() {
 }
 
 setup() {
-  rm -f /tmp/bats-detached-*
-  rm -f /tmp/bats-sync-*
-  rm -f /tmp/bats-shebang-*
-  rm -f /tmp/bats-shell-directive-*
-  rm -f /tmp/bats-pre-stop-hooks-*
-  rm -f /tmp/bats-post-start-hooks-*
-  rm -f /tmp/bats-pre-deploy-*
-  rm -f /tmp/bats-post-deploy-*
-  rm -f /tmp/bats-deploy-*
-  rm -f /tmp/bats-project-deploy-*
-  rm -f /tmp/bats-project-pre-deploy-*
-  rm -f /tmp/bats-project-post-deploy-*
-  rm -f /tmp/bats-one-shot-deploy-*
+  rm -f /tmp/bats-*
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure bats-one-shot-pre-deploy bats-one-shot-post-deploy bats-one-shot-failure-aborts bats-one-shot-priority bats-pre-deploy-cmd bats-post-deploy-cmd bats-deploy-both bats-project-pre-deploy bats-project-post-deploy bats-project-deploy-both bats-detached-pre-deploy bats-detached-post-deploy bats-deploy-failure bats-deploy-template bats-pre-deploy-fails bats-deploy-non-detached bats-project-deploy-failure bats-project-pre-deploy-fails bats-deploy-combined bats-one-shot-deploy-cmd; do
-    docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
+  for project in $(docker compose ls -a -q 2>/dev/null | grep "^bats-"); do
+    docker compose -p "$project" down --remove-orphans --volumes --timeout 5 2>/dev/null || true
   done
 
-  docker compose -p bats-shell-directive down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-  docker compose -p bats-pre-stop-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-  docker compose -p bats-post-start-hooks down --remove-orphans --volumes --timeout 5 2>/dev/null || true
-
-  rm -f /tmp/bats-detached-*
-  rm -f /tmp/bats-sync-*
-  rm -f /tmp/bats-shebang-*
-  rm -f /tmp/bats-shell-directive-*
-  rm -f /tmp/bats-pre-stop-hooks-*
-  rm -f /tmp/bats-post-start-hooks-*
-  rm -f /tmp/bats-pre-deploy-*
-  rm -f /tmp/bats-post-deploy-*
-  rm -f /tmp/bats-deploy-*
-  rm -f /tmp/bats-project-deploy-*
-  rm -f /tmp/bats-project-pre-deploy-*
-  rm -f /tmp/bats-project-post-deploy-*
-  rm -f /tmp/bats-one-shot-deploy-*
+  rm -f /tmp/bats-*
 }
 
 @test "default" {
@@ -153,8 +125,11 @@ teardown() {
   # completed marker should NOT exist yet (still running in background)
   [ ! -f /tmp/bats-detached-pre-stop-completed ]
 
-  # wait for the detached command to finish
-  sleep 7
+  # poll for the detached command to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/bats-detached-pre-stop-completed ] && break
+    sleep 1
+  done
 
   # completed marker should now exist (process ran to completion independently)
   [ -f /tmp/bats-detached-pre-stop-completed ]
@@ -179,8 +154,11 @@ teardown() {
   # completed marker should NOT exist yet (still running in background)
   [ ! -f /tmp/bats-detached-post-stop-completed ]
 
-  # wait for the detached command to finish
-  sleep 7
+  # poll for the detached command to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/bats-detached-post-stop-completed ] && break
+    sleep 1
+  done
 
   # completed marker should now exist (process ran to completion independently)
   [ -f /tmp/bats-detached-post-stop-completed ]
@@ -207,8 +185,11 @@ teardown() {
   [ ! -f /tmp/bats-detached-both-pre-completed ]
   [ ! -f /tmp/bats-detached-both-post-completed ]
 
-  # wait for the detached commands to finish
-  sleep 7
+  # poll for both detached commands to finish (up to 25s)
+  for i in $(seq 1 25); do
+    [ -f /tmp/bats-detached-both-pre-completed ] && [ -f /tmp/bats-detached-both-post-completed ] && break
+    sleep 1
+  done
 
   # both completed markers should now exist
   [ -f /tmp/bats-detached-both-pre-completed ]
