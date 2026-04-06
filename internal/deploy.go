@@ -210,6 +210,21 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		return nil
 	}
 
+	// Detect one-shot service and branch to dedicated handler
+	if isOneShotService(service) {
+		return deployOneShotService(ctx, DeployOneShotServiceInput{
+			Build:        input.Build,
+			ComposeFiles: input.ComposeFiles,
+			EnvFiles:     input.EnvFiles,
+			Executor:     input.Executor,
+			Logger:       input.Logger,
+			ProjectName:  input.ProjectName,
+			PullPolicy:   input.PullPolicy,
+			Service:      service,
+			ServiceName:  input.ServiceName,
+		})
+	}
+
 	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, service)
 	if err != nil {
 		return err
@@ -582,9 +597,19 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 
 // OrderServices orders the services in the project in dependency order
 // deploy each service in the project
-// start with the web service if it exists, and then process everything else in dependency order
+// 1. one-shot services (restart: "no") with no dependencies are deployed first
+// 2. then the web service if it exists and has no dependencies
+// 3. then everything else in dependency order
 // if the web service has dependencies, skip it and deploy all services in dependency order
 func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, error) {
+	// Collect one-shot services with no dependencies
+	oneShotNoDeps := []string{}
+	for _, service := range input.Project.Services {
+		if isOneShotService(&service) && len(service.DependsOn) == 0 {
+			oneShotNoDeps = append(oneShotNoDeps, service.Name)
+		}
+	}
+
 	hasWeb := false
 	skipWeb := true
 	for _, service := range input.Project.Services {
@@ -599,12 +624,18 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	}
 
 	dependencyOrder := []string{}
-	if hasWeb && skipWeb {
+	// Add one-shot services without dependencies first
+	dependencyOrder = append(dependencyOrder, oneShotNoDeps...)
+
+	// Add web next if it has no dependencies and wasn't already added as a one-shot
+	if hasWeb && skipWeb && !slices.Contains(oneShotNoDeps, "web") {
 		dependencyOrder = append(dependencyOrder, "web")
 	}
+
 	var mu sync.Mutex
 	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
-		if name == "web" && skipWeb {
+		// Skip services already added
+		if slices.Contains(dependencyOrder, name) {
 			return nil
 		}
 
@@ -817,4 +848,100 @@ func ServiceReplicas(input DeployServiceInput, service *types.ServiceConfig) int
 		}
 	}
 	return replicas
+}
+
+// isOneShotService returns true if the service is a one-shot service (restart: "no")
+func isOneShotService(service *types.ServiceConfig) bool {
+	return service.Restart == "no"
+}
+
+// DeployOneShotServiceInput is the input for the deployOneShotService function
+type DeployOneShotServiceInput struct {
+	// Build is whether to build images before running
+	Build bool
+	// ComposeFiles is the list of paths to the compose files
+	ComposeFiles []string
+	// EnvFiles is the list of paths to the env files
+	EnvFiles []string
+	// Executor is the command executor to use
+	Executor CommandExecutor
+	// Logger is the logger to use
+	Logger *command.ZerologUi
+	// ProjectName is the name of the project
+	ProjectName string
+	// PullPolicy is the pull policy override from the CLI flag
+	PullPolicy string
+	// Service is the service configuration
+	Service *types.ServiceConfig
+	// ServiceName is the name of the service
+	ServiceName string
+}
+
+// deployOneShotService runs a one-shot service (restart: "no") to completion.
+// It runs `docker compose run --rm --no-deps <service>`, blocks until exit,
+// and returns an error on non-zero exit code.
+func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) error {
+	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, input.Service)
+	if err != nil {
+		return err
+	}
+
+	projectDir := filepath.Dir(input.ComposeFiles[0])
+
+	executor := input.Executor
+	if executor == nil {
+		executor = ExecCommand
+	}
+
+	// Pre-build image when build flag is set
+	if buildImage {
+		input.Logger.Info(fmt.Sprintf("Building image for one-shot service %s", input.ServiceName))
+		buildArgs := []string{"compose"}
+		buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
+		buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
+		buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
+		_, err = executor(ctx, ExecCommandInput{
+			Command:          "docker",
+			Args:             buildArgs,
+			WorkingDirectory: projectDir,
+		})
+		if err != nil {
+			return fmt.Errorf("error building image for one-shot service %s: %v", input.ServiceName, err)
+		}
+	}
+
+	// Pre-pull image when pull policy is "always" and not building
+	if pullPolicy == "always" && !buildImage {
+		input.Logger.Info(fmt.Sprintf("Pulling image for one-shot service %s", input.ServiceName))
+		pullArgs := []string{"compose"}
+		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
+		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
+		_, err = executor(ctx, ExecCommandInput{
+			Command:          "docker",
+			Args:             pullArgs,
+			WorkingDirectory: projectDir,
+		})
+		if err != nil {
+			return fmt.Errorf("error pulling image for one-shot service %s: %v", input.ServiceName, err)
+		}
+	}
+
+	// Run the one-shot service
+	input.Logger.Info(fmt.Sprintf("Running one-shot service %s", input.ServiceName))
+	runArgs := []string{"compose"}
+	runArgs = append(runArgs, composeFileArgs(input.ComposeFiles)...)
+	runArgs = append(runArgs, envFileArgs(input.EnvFiles)...)
+	runArgs = append(runArgs, "-p", input.ProjectName, "run", "--rm", "--no-deps", input.ServiceName)
+	resp, err := executor(ctx, ExecCommandInput{
+		Command:          "docker",
+		Args:             runArgs,
+		WorkingDirectory: projectDir,
+	})
+	if err != nil {
+		return fmt.Errorf("one-shot service %s failed (exit code %d): %v", input.ServiceName, resp.ExitCode, err)
+	}
+
+	input.Logger.Info(fmt.Sprintf("One-shot service %s completed successfully", input.ServiceName))
+	return nil
 }

@@ -1,0 +1,6 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["echo", "migration-complete"]
+    restart: "no"

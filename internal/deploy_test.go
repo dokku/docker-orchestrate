@@ -2706,6 +2706,561 @@ func TestDeployServiceWaitAfterHealthy(t *testing.T) {
 	})
 }
 
+func TestIsOneShotService(t *testing.T) {
+	tests := []struct {
+		name     string
+		restart  string
+		expected bool
+	}{
+		{name: "restart_no", restart: "no", expected: true},
+		{name: "restart_empty", restart: "", expected: false},
+		{name: "restart_always", restart: "always", expected: false},
+		{name: "restart_on_failure", restart: "on-failure", expected: false},
+		{name: "restart_unless_stopped", restart: "unless-stopped", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &types.ServiceConfig{
+				Name:    "test",
+				Restart: tt.restart,
+			}
+			result := isOneShotService(service)
+			if result != tt.expected {
+				t.Errorf("isOneShotService() = %v, want %v for restart=%q", result, tt.expected, tt.restart)
+			}
+		})
+	}
+}
+
+func TestDeployOneShotService(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("runs_docker_compose_run_rm_no_deps", func(t *testing.T) {
+		var capturedArgs [][]string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedArgs = append(capturedArgs, input.Args)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		mockClient := &mockDockerClient{}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(capturedArgs) != 1 {
+			t.Fatalf("expected 1 command, got %d", len(capturedArgs))
+		}
+
+		args := capturedArgs[0]
+		argsStr := strings.Join(args, " ")
+		if !strings.Contains(argsStr, "run") {
+			t.Errorf("expected 'run' in args, got: %v", args)
+		}
+		if !strings.Contains(argsStr, "--rm") {
+			t.Errorf("expected '--rm' in args, got: %v", args)
+		}
+		if !strings.Contains(argsStr, "--no-deps") {
+			t.Errorf("expected '--no-deps' in args, got: %v", args)
+		}
+		if !strings.Contains(argsStr, "migrate") {
+			t.Errorf("expected 'migrate' in args, got: %v", args)
+		}
+		// Should NOT contain rolling update args
+		if strings.Contains(argsStr, "up") {
+			t.Errorf("one-shot should not use 'up', got: %v", args)
+		}
+		if strings.Contains(argsStr, "--scale") {
+			t.Errorf("one-shot should not use '--scale', got: %v", args)
+		}
+		if strings.Contains(argsStr, "--detach") {
+			t.Errorf("one-shot should not use '--detach', got: %v", args)
+		}
+	})
+
+	t.Run("exit_0_returns_success", func(t *testing.T) {
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		mockClient := &mockDockerClient{}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Errorf("expected nil error, got: %v", err)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "One-shot service migrate completed successfully") {
+			t.Errorf("expected success message in output, got: %s", output)
+		}
+	})
+
+	t.Run("exit_1_returns_error", func(t *testing.T) {
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
+		}
+
+		mockClient := &mockDockerClient{}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "one-shot service migrate failed") {
+			t.Errorf("expected error message about one-shot failure, got: %v", err)
+		}
+	})
+
+	t.Run("no_docker_client_calls", func(t *testing.T) {
+		clientCalled := false
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				clientCalled = true
+				return []container.Summary{}, nil
+			},
+			containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
+				clientCalled = true
+				return nil
+			},
+			containerRename: func(ctx context.Context, id, name string) error {
+				clientCalled = true
+				return nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				clientCalled = true
+				return nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if clientCalled {
+			t.Error("expected no Docker client calls for one-shot service")
+		}
+	})
+
+	t.Run("build_flag_builds_before_run", func(t *testing.T) {
+		var capturedArgs [][]string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedArgs = append(capturedArgs, input.Args)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		mockClient := &mockDockerClient{}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+					Build:   &types.BuildConfig{},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Build:                 true,
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(capturedArgs) != 2 {
+			t.Fatalf("expected 2 commands (build + run), got %d", len(capturedArgs))
+		}
+
+		buildArgs := strings.Join(capturedArgs[0], " ")
+		if !strings.Contains(buildArgs, "build") {
+			t.Errorf("expected first command to be build, got: %v", capturedArgs[0])
+		}
+
+		runArgs := strings.Join(capturedArgs[1], " ")
+		if !strings.Contains(runArgs, "run") {
+			t.Errorf("expected second command to be run, got: %v", capturedArgs[1])
+		}
+	})
+
+	t.Run("pull_always_pulls_before_run", func(t *testing.T) {
+		var capturedArgs [][]string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedArgs = append(capturedArgs, input.Args)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		mockClient := &mockDockerClient{}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			PullPolicy:            "always",
+			ServiceName:           "migrate",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(capturedArgs) != 2 {
+			t.Fatalf("expected 2 commands (pull + run), got %d", len(capturedArgs))
+		}
+
+		pullArgs := strings.Join(capturedArgs[0], " ")
+		if !strings.Contains(pullArgs, "pull") {
+			t.Errorf("expected first command to be pull, got: %v", capturedArgs[0])
+		}
+
+		runArgs := strings.Join(capturedArgs[1], " ")
+		if !strings.Contains(runArgs, "run") {
+			t.Errorf("expected second command to be run, got: %v", capturedArgs[1])
+		}
+	})
+}
+
+func TestOrderServicesOneShotPriority(t *testing.T) {
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("one_shot_no_deps_before_web_no_deps", func(t *testing.T) {
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+			},
+		}
+
+		result, err := OrderServices(ctx, DeployProjectInput{
+			Project: project,
+			Logger:  logger,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// migrate should come before web
+		migrateIdx := -1
+		webIdx := -1
+		for i, name := range result {
+			if name == "migrate" {
+				migrateIdx = i
+			}
+			if name == "web" {
+				webIdx = i
+			}
+		}
+
+		if migrateIdx == -1 {
+			t.Fatal("migrate not found in result")
+		}
+		if webIdx == -1 {
+			t.Fatal("web not found in result")
+		}
+		if migrateIdx >= webIdx {
+			t.Errorf("expected migrate (idx=%d) before web (idx=%d), order: %v", migrateIdx, webIdx, result)
+		}
+	})
+
+	t.Run("multiple_one_shots_no_deps_before_web", func(t *testing.T) {
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+				},
+				"seed": types.ServiceConfig{
+					Name:    "seed",
+					Restart: "no",
+				},
+			},
+		}
+
+		result, err := OrderServices(ctx, DeployProjectInput{
+			Project: project,
+			Logger:  logger,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Both one-shots should come before web
+		webIdx := -1
+		for i, name := range result {
+			if name == "web" {
+				webIdx = i
+			}
+		}
+
+		for _, name := range []string{"migrate", "seed"} {
+			idx := -1
+			for i, n := range result {
+				if n == name {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 {
+				t.Fatalf("%s not found in result", name)
+			}
+			if idx >= webIdx {
+				t.Errorf("expected %s (idx=%d) before web (idx=%d), order: %v", name, idx, webIdx, result)
+			}
+		}
+	})
+
+	t.Run("one_shot_with_deps_follows_dependency_order", func(t *testing.T) {
+		project := &types.Project{
+			Services: types.Services{
+				"db": types.ServiceConfig{
+					Name: "db",
+				},
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+					DependsOn: map[string]types.ServiceDependency{
+						"db": {},
+					},
+				},
+				"web": types.ServiceConfig{
+					Name: "web",
+					DependsOn: map[string]types.ServiceDependency{
+						"migrate": {},
+					},
+				},
+			},
+		}
+
+		result, err := OrderServices(ctx, DeployProjectInput{
+			Project: project,
+			Logger:  logger,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Order should be: db, migrate, web (dependency chain)
+		serviceIndex := make(map[string]int)
+		for i, name := range result {
+			serviceIndex[name] = i
+		}
+
+		if serviceIndex["db"] >= serviceIndex["migrate"] {
+			t.Errorf("expected db before migrate, order: %v", result)
+		}
+		if serviceIndex["migrate"] >= serviceIndex["web"] {
+			t.Errorf("expected migrate before web, order: %v", result)
+		}
+	})
+
+	t.Run("post_deploy_one_shot_depends_on_web_runs_after", func(t *testing.T) {
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+				"warm-cache": types.ServiceConfig{
+					Name:    "warm-cache",
+					Restart: "no",
+					DependsOn: map[string]types.ServiceDependency{
+						"web": {},
+					},
+				},
+			},
+		}
+
+		result, err := OrderServices(ctx, DeployProjectInput{
+			Project: project,
+			Logger:  logger,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		serviceIndex := make(map[string]int)
+		for i, name := range result {
+			serviceIndex[name] = i
+		}
+
+		if serviceIndex["web"] >= serviceIndex["warm-cache"] {
+			t.Errorf("expected web before warm-cache, order: %v", result)
+		}
+	})
+
+	t.Run("web_as_one_shot_not_duplicated", func(t *testing.T) {
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:    "web",
+					Restart: "no",
+				},
+				"api": types.ServiceConfig{
+					Name: "api",
+				},
+			},
+		}
+
+		result, err := OrderServices(ctx, DeployProjectInput{
+			Project: project,
+			Logger:  logger,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// web should appear exactly once
+		webCount := 0
+		for _, name := range result {
+			if name == "web" {
+				webCount++
+			}
+		}
+		if webCount != 1 {
+			t.Errorf("expected web to appear once, appeared %d times, order: %v", webCount, result)
+		}
+
+		// web (one-shot) should still be first
+		if result[0] != "web" {
+			t.Errorf("expected web to be first, got %s, order: %v", result[0], result)
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }

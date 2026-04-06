@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -661,4 +661,37 @@ teardown() {
   run docker ps --filter "label=com.docker.compose.project=bats-wait-after-healthy" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "one-shot service (restart: no) runs to completion" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-success"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-success migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "One-shot service migrate completed successfully"
+}
+
+@test "one-shot service (restart: no) exit 1 aborts deployment" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-failure"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-failure migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+}
+
+@test "one-shot service leaves no running containers" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-success"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-success migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # No containers should be running (--rm removes them)
+  run docker ps --filter "label=com.docker.compose.project=bats-one-shot-success" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "" "$output"
 }
