@@ -2,8 +2,11 @@ package internal
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecCommandResponse(t *testing.T) {
@@ -72,6 +75,70 @@ func TestExecCommand(t *testing.T) {
 		}
 		if resp.StdoutContents() != "/" {
 			t.Errorf("expected '/', got '%s'", resp.StdoutContents())
+		}
+	})
+
+	t.Run("detached command starts and returns immediately", func(t *testing.T) {
+		start := time.Now()
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:  "sleep",
+			Args:     []string{"10"},
+			Detached: true,
+		})
+		duration := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should return almost immediately, not wait for the 10s sleep
+		if duration > 2*time.Second {
+			t.Errorf("detached command should return immediately, took %v", duration)
+		}
+	})
+
+	t.Run("detached command actually executes", func(t *testing.T) {
+		markerFile := fmt.Sprintf("/tmp/exec-test-detached-%d", time.Now().UnixNano())
+		defer os.Remove(markerFile)
+
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:  "/bin/sh",
+			Args:     []string{"-c", fmt.Sprintf("touch %s", markerFile)},
+			Detached: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Give the detached process a moment to execute
+		time.Sleep(500 * time.Millisecond)
+
+		if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+			t.Error("expected marker file to exist, detached command did not execute")
+		}
+	})
+
+	t.Run("detached command survives context cancellation", func(t *testing.T) {
+		markerFile := fmt.Sprintf("/tmp/exec-test-ctx-%d", time.Now().UnixNano())
+		defer os.Remove(markerFile)
+
+		// Use a background context for detached (simulating what scripts.go does)
+		bgCtx := context.Background()
+
+		_, err := ExecCommand(bgCtx, ExecCommandInput{
+			Command:  "/bin/sh",
+			Args:     []string{"-c", fmt.Sprintf("sleep 1 && touch %s", markerFile)},
+			Detached: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Wait for the script to complete
+		time.Sleep(2 * time.Second)
+
+		if _, err := os.Stat(markerFile); os.IsNotExist(err) {
+			t.Error("expected marker file to exist, detached command should survive")
 		}
 	})
 }

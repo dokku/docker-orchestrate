@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	"context"
-
-	execute "github.com/alexellis/go-execute/v2"
 	"github.com/fatih/color"
 )
 
@@ -54,6 +52,12 @@ type ExecCommandInput struct {
 
 	// WorkingDirectory is the working directory to run the command in
 	WorkingDirectory string
+
+	// Detached starts the command and returns immediately without waiting
+	// for it to complete. The process is forked synchronously (guaranteed
+	// to be running when the function returns) but runs independently
+	// in the background.
+	Detached bool
 }
 
 // ExecCommandResponse is the response for the ExecCommand function
@@ -128,11 +132,12 @@ func ExecCommand(ctx context.Context, input ExecCommandInput) (ExecCommandRespon
 		command = "sudo"
 	}
 
-	cmd := execute.ExecTask{
+	cmd := ExecTask{
 		Command:            command,
 		Args:               commandArgs,
 		Env:                env,
 		DisableStdioBuffer: input.DisableStdioBuffer,
+		Detached:           input.Detached,
 	}
 
 	if input.WorkingDirectory != "" {

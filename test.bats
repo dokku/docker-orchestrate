@@ -1001,6 +1001,21 @@ teardown() {
   fi
 }
 
+@test "post-deploy host command detached process is forked before exit" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/detached-post-deploy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-detached-post-deploy-fork web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # The "started" marker must exist — proves the process was forked before exit
+  # This is the key test for issue #80: without the fix, this marker may not
+  # exist because the goroutine that forks the process may not execute before
+  # the main process exits.
+  [ -f /tmp/bats-detached-post-deploy-started ]
+}
+
 # =====================================================
 # Non-detached (synchronous) execution tests
 # =====================================================

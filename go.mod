@@ -3,7 +3,6 @@ module github.com/dokku/docker-orchestrate
 go 1.25.0
 
 require (
-	github.com/alexellis/go-execute/v2 v2.2.1
 	github.com/compose-spec/compose-go/v2 v2.10.2
 	github.com/docker/compose/v5 v5.1.1
 	github.com/docker/docker v28.5.2+incompatible

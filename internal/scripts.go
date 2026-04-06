@@ -188,67 +188,68 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 	}
 
 	command := commandBuf.String()
-	if input.Shebang == "" {
-		input.Shebang = "#!/bin/sh"
-	}
-	if !strings.HasPrefix(command, "#!") {
-		command = input.Shebang + "\n" + command
+
+	// Determine interpreter from shebang
+	shebangArgs := parseShebang(command)
+	if shebangArgs == nil {
+		defaultShebang := input.Shebang
+		if defaultShebang == "" {
+			defaultShebang = "#!/bin/sh"
+		}
+		shebangArgs = parseShebang(defaultShebang)
 	}
 
-	tempFile, err := os.CreateTemp("", input.ScriptType+"-*.script")
-	if err != nil {
-		return fmt.Errorf("error creating temporary %s script: %v", input.ScriptType, err)
-	}
-	tempFileName := tempFile.Name()
-
-	if _, err := tempFile.WriteString(command); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error writing %s command to temporary file: %v", input.ScriptType, err)
-	}
-	if err := tempFile.Close(); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error closing temporary %s file: %v", input.ScriptType, err)
+	// Strip shebang line from script content
+	scriptContent := command
+	if strings.HasPrefix(strings.TrimSpace(scriptContent), "#!") {
+		lines := strings.Split(scriptContent, "\n")
+		if len(lines) > 1 {
+			scriptContent = strings.Join(lines[1:], "\n")
+		} else {
+			scriptContent = ""
+		}
 	}
 
-	if err := os.Chmod(tempFileName, 0755); err != nil {
-		os.Remove(tempFileName)
-		return fmt.Errorf("error making temporary %s script executable: %v", input.ScriptType, err)
-	}
-
-	// If detached, run the command asynchronously and return immediately
-	if input.Detached {
-		go func() {
-			// Use background context so the command continues even if the original context is cancelled
-			bgCtx := context.Background()
-			var output bytes.Buffer
-			_, err := input.Executor(bgCtx, ExecCommandInput{
-				Command:          tempFileName,
-				Env:              input.Env,
-				StdoutWriter:     &output,
-				StderrWriter:     &output,
-				WorkingDirectory: os.TempDir(),
-			})
-			// In detached mode, we don't report errors - the command runs independently
-			_ = err
-			// Clean up the temp file after the command completes
-			os.Remove(tempFileName)
-		}()
-		return nil
-	}
-
-	// Synchronous execution (default behavior) - clean up temp file when done
-	defer os.Remove(tempFileName)
-
-	// Synchronous execution (default behavior)
-	var output bytes.Buffer
-	_, err = input.Executor(ctx, ExecCommandInput{
-		Command:          tempFile.Name(),
+	// Build executor input
+	execInput := ExecCommandInput{
 		Env:              input.Env,
-		StdoutWriter:     &output,
-		StderrWriter:     &output,
+		Detached:         input.Detached,
 		WorkingDirectory: os.TempDir(),
-	})
+	}
+
+	// Shell interpreters: use -c flag; non-shell: use stdin
+	if len(shebangArgs) >= 2 && shebangArgs[len(shebangArgs)-1] == "-c" {
+		execInput.Command = shebangArgs[0]
+		execInput.Args = append(shebangArgs[1:], scriptContent)
+	} else if len(shebangArgs) > 0 {
+		execInput.Command = shebangArgs[0]
+		execInput.Args = shebangArgs[1:]
+		execInput.Stdin = strings.NewReader(scriptContent)
+	} else {
+		// Fallback: use /bin/sh -c
+		execInput.Command = "/bin/sh"
+		execInput.Args = []string{"-c", scriptContent}
+	}
+
+	// For detached mode, use background context so the command continues
+	// even if the caller's context is cancelled. The Detached flag in
+	// ExecCommandInput ensures the process is forked synchronously but
+	// not waited on.
+	if input.Detached {
+		ctx = context.Background()
+	}
+
+	var output bytes.Buffer
+	execInput.StdoutWriter = &output
+	execInput.StderrWriter = &output
+
+	_, err = input.Executor(ctx, execInput)
 	if err != nil {
+		// In detached mode, start errors are genuine failures (process never forked)
+		if input.Detached {
+			return fmt.Errorf("error starting detached %s command: %v", input.ScriptType, err)
+		}
+
 		return &ErrorWithOutput{
 			Err:    fmt.Errorf("%s command failed for container %s: %v", input.ScriptType, containerShortID, err),
 			Output: strings.TrimSpace(output.String()),
