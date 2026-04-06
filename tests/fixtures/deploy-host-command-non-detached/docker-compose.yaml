@@ -1,0 +1,18 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      x-pre-deploy-host-command: |
+        touch /tmp/bats-deploy-non-detached-pre-started
+        sleep 1
+        touch /tmp/bats-deploy-non-detached-pre-completed
+      x-post-deploy-host-command: |
+        touch /tmp/bats-deploy-non-detached-post-started
+        sleep 1
+        touch /tmp/bats-deploy-non-detached-post-completed
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s

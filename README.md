@@ -346,7 +346,89 @@ services:
 
 ## Script Extensions
 
-In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.
+In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the compose file.
+
+### Deploy Commands
+
+`docker-orchestrate` supports pre/post deploy host commands at two levels: **project-level** (run once per deployment invocation) and **per-service** (run once per service deployment).
+
+#### Project-Level Deploy Commands
+
+Project-level deploy commands are defined as top-level compose extensions and bracket the entire deployment:
+
+```yaml
+x-pre-deploy-host-command: |
+  echo "Deploy starting for {{.ProjectName}}"
+x-post-deploy-host-command: |
+  curl -X POST https://hooks.example.com/deploy-complete
+x-pre-deploy-host-command-detached: false
+x-post-deploy-host-command-detached: false
+
+services:
+  web:
+    image: myapp:latest
+```
+
+- **`x-pre-deploy-host-command`**: Runs on the host before any service is deployed
+- **`x-post-deploy-host-command`**: Runs on the host after all services are deployed successfully
+- Project-level hooks always run, even for single-service deploys (`docker orchestrate deploy web`)
+- Template variable: `.ProjectName`
+
+#### Per-Service Deploy Commands
+
+Per-service deploy commands are defined under the service's `deploy` section and bracket that service's deployment:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    deploy:
+      replicas: 3
+      x-pre-deploy-host-command: |
+        docker compose run --rm migrate
+      x-post-deploy-host-command: |
+        echo "{{.ServiceName}} deployed in {{.ProjectName}}"
+      x-pre-deploy-host-command-detached: false
+      x-post-deploy-host-command-detached: false
+      update_config:
+        order: start-first
+```
+
+- **`x-pre-deploy-host-command`**: Runs on the host before the service deploy starts
+- **`x-post-deploy-host-command`**: Runs on the host after the service deploys successfully
+- Template variables: `.ServiceName`, `.ProjectName`
+- One-shot services (restart: "no") also receive per-service deploy hooks
+
+#### Deploy Command Execution Order
+
+When deploying a project, hooks execute in this order:
+
+1. Project `x-pre-deploy-host-command` (once)
+2. For each service in deploy order:
+   1. Service `x-pre-deploy-host-command`
+   2. Container operations (cleanup, build, pull, rolling update, scale)
+   3. Service `x-post-deploy-host-command` (only on success)
+3. Project `x-post-deploy-host-command` (once, only if all services succeed)
+
+#### Deploy Command Failure Behavior
+
+- If a **pre-deploy** command fails (non-zero exit), the deployment is aborted immediately
+- **Post-deploy** commands only run after a successful deployment — they are skipped on failure
+- Project-level post-deploy does not run if any service deployment fails
+
+#### Deploy Command Detached Execution
+
+Both project-level and per-service deploy commands support detached mode:
+
+```yaml
+x-pre-deploy-host-command-detached: true
+x-post-deploy-host-command-detached: true
+```
+
+- Detached commands run in the background and do not block deployment
+- Detached commands continue running even if `docker-orchestrate` exits
+- Only boolean values (`true` or `false`) are allowed
+- Default is `false` (synchronous execution)
 
 ### Script Healthchecks
 
@@ -538,18 +620,23 @@ Each hook in the `post_start` list is executed sequentially via Docker exec afte
 
 If a post_start hook fails, the container is treated as failed: the pre-stop cleanup sequence is executed and the container is terminated, similar to a healthcheck failure.
 
-**Full container lifecycle order** (scale-up path):
+**Full service lifecycle order** (project deploy):
 
-1. Container start
-2. Compose spec `post_start` hooks (commands inside the container)
-3. Docker healthcheck (or `x-healthcheck-wait` for containers without healthchecks) + `x-healthcheck-host-command`
-4. `x-wait-after-healthy` delay (if configured)
-5. _...service runs..._
-6. `x-pre-stop-host-command` (on the host)
-7. `x-pre-stop-command` (script inside the container)
-8. Compose spec `pre_stop` hooks (commands inside the container)
-9. Container stop + remove
-10. `x-post-stop-host-command` (on the host)
+1. Project `x-pre-deploy-host-command` (on the host, once)
+2. Service `x-pre-deploy-host-command` (on the host, per service)
+3. Container operations (per container in rolling update / scale-up):
+   1. Container start
+   2. Compose spec `post_start` hooks (commands inside the container)
+   3. Docker healthcheck (or `x-healthcheck-wait` for containers without healthchecks) + `x-healthcheck-host-command`
+   4. `x-wait-after-healthy` delay (if configured)
+   5. _...service runs..._
+   6. `x-pre-stop-host-command` (on the host)
+   7. `x-pre-stop-command` (script inside the container)
+   8. Compose spec `pre_stop` hooks (commands inside the container)
+   9. Container stop + remove
+   10. `x-post-stop-host-command` (on the host)
+4. Service `x-post-deploy-host-command` (on the host, per service, only on success)
+5. Project `x-post-deploy-host-command` (on the host, once, only if all services succeed)
 
 #### Detached Execution
 
@@ -578,16 +665,17 @@ services:
 
 ### Script Templating
 
-Both `x-healthcheck-host-command`, `x-pre-stop-host-command`, and `x-post-stop-host-command` are treated as Go templates and have access to:
+All host commands (`x-healthcheck-host-command`, `x-pre-stop-host-command`, `x-post-stop-host-command`, `x-pre-deploy-host-command`, `x-post-deploy-host-command`) are treated as Go templates and have access to:
 
-- `.ContainerID`: Full ID of the container.
-- `.ContainerShortID`: First 12 characters of the container ID.
-- `.ContainerIP`: Internal IP address of the container.
-- `.ServiceName`: Name of the service.
+- `.ContainerID`: Full ID of the container (empty for deploy commands).
+- `.ContainerShortID`: First 12 characters of the container ID (empty for deploy commands).
+- `.ContainerIP`: Internal IP address of the container (empty for deploy commands).
+- `.ProjectName`: Name of the project.
+- `.ServiceName`: Name of the service (empty for project-level deploy commands).
 
 ### Host Command Shell
 
-Host commands (`x-healthcheck-host-command`, `x-pre-stop-host-command`, `x-post-stop-host-command`) are executed on the host machine using `/bin/sh` by default. To use a different interpreter, add a shebang as the first line of the command:
+Host commands (`x-healthcheck-host-command`, `x-pre-stop-host-command`, `x-post-stop-host-command`, `x-pre-deploy-host-command`, `x-post-deploy-host-command`) are executed on the host machine using `/bin/sh` by default. To use a different interpreter, add a shebang as the first line of the command:
 
 ```yaml
 services:

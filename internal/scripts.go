@@ -118,6 +118,8 @@ type ScriptTemplateData struct {
 	ContainerIP string
 	// ContainerShortID is the short ID of the container
 	ContainerShortID string
+	// ProjectName is the name of the project
+	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
 }
@@ -134,6 +136,8 @@ type runScriptInput struct {
 	Env map[string]string
 	// Executor is the command executor to use
 	Executor CommandExecutor
+	// ProjectName is the name of the project
+	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
 	// Script is the script to run
@@ -175,6 +179,7 @@ func runHostScript(ctx context.Context, input runScriptInput) error {
 		ContainerID:      input.ContainerID,
 		ContainerIP:      containerIP,
 		ContainerShortID: containerShortID,
+		ProjectName:      input.ProjectName,
 		ServiceName:      input.ServiceName,
 	}
 

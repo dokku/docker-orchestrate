@@ -3261,6 +3261,627 @@ func TestOrderServicesOneShotPriority(t *testing.T) {
 	})
 }
 
+func TestDeployServicePreDeployHostCommand(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("pre-deploy runs before container operations", func(t *testing.T) {
+		var operationOrder []string
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				operationOrder = append(operationOrder, "container_list")
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				operationOrder = append(operationOrder, "pre-deploy-script")
+			} else {
+				operationOrder = append(operationOrder, "docker-compose")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command": "echo pre-deploy",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(operationOrder) < 2 {
+			t.Fatalf("expected at least 2 operations, got %d: %v", len(operationOrder), operationOrder)
+		}
+		if operationOrder[0] != "pre-deploy-script" {
+			t.Errorf("expected first operation to be pre-deploy-script, got %s, order: %v", operationOrder[0], operationOrder)
+		}
+	})
+
+	t.Run("pre-deploy failure aborts deployment", func(t *testing.T) {
+		containerListCalled := false
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				containerListCalled = true
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command": "exit 1",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "pre-deploy host command failed") {
+			t.Errorf("expected pre-deploy error, got: %v", err)
+		}
+		if containerListCalled {
+			t.Error("container list should not have been called after pre-deploy failure")
+		}
+	})
+}
+
+func TestDeployServicePostDeployHostCommand(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("post-deploy runs after successful deploy", func(t *testing.T) {
+		postDeployRan := false
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				postDeployRan = true
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-post-deploy-host-command": "echo post-deploy",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !postDeployRan {
+			t.Error("expected post-deploy script to run")
+		}
+	})
+
+	t.Run("post-deploy does NOT run on deploy failure", func(t *testing.T) {
+		postDeployRan := false
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				if callCount == 1 {
+					return nil, fmt.Errorf("simulated container list error")
+				}
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				postDeployRan = true
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-post-deploy-host-command": "echo post-deploy",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err == nil {
+			t.Fatal("expected error from deploy failure")
+		}
+		if postDeployRan {
+			t.Error("post-deploy should NOT have run after deploy failure")
+		}
+	})
+}
+
+func TestDeployOneShotServiceDeployHooks(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("one-shot service runs pre and post deploy hooks", func(t *testing.T) {
+		var scriptCount int
+		mockClient := &mockDockerClient{}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				scriptCount++
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command":  "echo pre",
+							"x-post-deploy-host-command": "echo post",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// pre-deploy + post-deploy = 2 scripts
+		if scriptCount != 2 {
+			t.Errorf("expected 2 script executions (pre + post), got %d", scriptCount)
+		}
+	})
+
+	t.Run("one-shot failure skips post-deploy hook", func(t *testing.T) {
+		var scriptCount int
+		mockClient := &mockDockerClient{}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				scriptCount++
+				return ExecCommandResponse{ExitCode: 0}, nil
+			}
+			// docker compose run fails
+			return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"migrate": types.ServiceConfig{
+					Name:    "migrate",
+					Restart: "no",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command":  "echo pre",
+							"x-post-deploy-host-command": "echo post",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "migrate",
+		})
+		if err == nil {
+			t.Fatal("expected error from one-shot failure")
+		}
+		// Only pre-deploy should have run, not post-deploy
+		if scriptCount != 1 {
+			t.Errorf("expected 1 script execution (pre only), got %d", scriptCount)
+		}
+	})
+}
+
+func TestDeployProjectDeployHooks(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("project-level hooks bracket service deployments", func(t *testing.T) {
+		var operationOrder []string
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				operationOrder = append(operationOrder, "script")
+			} else {
+				operationOrder = append(operationOrder, "docker-compose")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+			},
+			Extensions: map[string]interface{}{
+				"x-pre-deploy-host-command":  "echo project-pre",
+				"x-post-deploy-host-command": "echo project-post",
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(operationOrder) < 2 {
+			t.Fatalf("expected at least 2 operations, got %d: %v", len(operationOrder), operationOrder)
+		}
+		// First operation should be project pre-deploy script
+		if operationOrder[0] != "script" {
+			t.Errorf("expected first operation to be script (project pre-deploy), got %s", operationOrder[0])
+		}
+		// Last operation should be project post-deploy script
+		if operationOrder[len(operationOrder)-1] != "script" {
+			t.Errorf("expected last operation to be script (project post-deploy), got %s", operationOrder[len(operationOrder)-1])
+		}
+	})
+
+	t.Run("project pre-deploy failure aborts all deployments", func(t *testing.T) {
+		serviceCalled := false
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				serviceCalled = true
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+			},
+			Extensions: map[string]interface{}{
+				"x-pre-deploy-host-command": "exit 1",
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "project pre-deploy host command failed") {
+			t.Errorf("expected project pre-deploy error, got: %v", err)
+		}
+		if serviceCalled {
+			t.Error("no service operations should have run after project pre-deploy failure")
+		}
+	})
+
+	t.Run("project post-deploy does NOT run on service failure", func(t *testing.T) {
+		var scriptCount int
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				if callCount == 1 {
+					return nil, fmt.Errorf("simulated error")
+				}
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if strings.HasSuffix(input.Command, ".script") {
+				scriptCount++
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+				},
+			},
+			Extensions: map[string]interface{}{
+				"x-pre-deploy-host-command":  "echo pre",
+				"x-post-deploy-host-command": "echo post",
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil {
+			t.Fatal("expected error from service failure")
+		}
+		// Only project pre-deploy should have run, not post-deploy
+		if scriptCount != 1 {
+			t.Errorf("expected 1 script (project pre only), got %d", scriptCount)
+		}
+	})
+}
+
+func TestDeployServiceDeployHooksDetached(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("detached flags are parsed correctly", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command":           "echo pre",
+							"x-post-deploy-host-command":          "echo post",
+							"x-pre-deploy-host-command-detached":  true,
+							"x-post-deploy-host-command-detached": true,
+						},
+					},
+				},
+			},
+		}
+
+		// Should not error - detached flags should be parsed correctly
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid detached flag produces error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						Extensions: map[string]interface{}{
+							"x-pre-deploy-host-command":          "echo pre",
+							"x-pre-deploy-host-command-detached": "not-a-bool",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err == nil {
+			t.Fatal("expected error for invalid detached flag")
+		}
+	})
+}
+
+func TestDeployServiceNoDeployConfig(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	// Service with nil Deploy config should not error
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{
+				Name: "web",
+			},
+		},
+	}
+
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func intPtr(i int) *int {
 	return &i
 }

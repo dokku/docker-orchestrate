@@ -133,6 +133,49 @@ func TestRunHostScript(t *testing.T) {
 		}
 	})
 
+	t.Run("project name template variable", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					NetworkSettings: &container.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"bridge": {
+								IPAddress: "172.17.0.2",
+							},
+						},
+					},
+				}, nil
+			},
+		}
+
+		var executedCommand string
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			content, _ := os.ReadFile(input.Command)
+			executedCommand = string(content)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := runScriptInput{
+			Client:      mockClient,
+			ContainerID: "12345678901234567890",
+			Executor:    executor,
+			ProjectName: "myproject",
+			ServiceName: "web",
+			Script:      "echo {{.ProjectName}} {{.ServiceName}}",
+			ScriptType:  "test",
+		}
+
+		err := runHostScript(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		expected := "#!/bin/sh\necho myproject web"
+		if !strings.Contains(executedCommand, expected) {
+			t.Errorf("expected command to contain %q, got %q", expected, executedCommand)
+		}
+	})
+
 	t.Run("failing command", func(t *testing.T) {
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {

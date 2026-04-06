@@ -1,0 +1,15 @@
+---
+x-pre-deploy-host-command: |
+  date +%s%N > /tmp/bats-project-deploy-both-pre-time
+x-post-deploy-host-command: |
+  date +%s%N > /tmp/bats-project-deploy-both-post-time
+
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s

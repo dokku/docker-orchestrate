@@ -29,6 +29,8 @@ type WaitForHealthcheckInput struct {
 	HealthcheckCommand string
 	// Monitor is the health check monitoring duration
 	Monitor time.Duration
+	// ProjectName is the name of the project
+	ProjectName string
 	// ServiceName is the name of the service
 	ServiceName string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
@@ -56,6 +58,7 @@ func waitForHealthcheck(ctx context.Context, input WaitForHealthcheckInput) erro
 		Client:      input.Client,
 		ContainerID: input.ContainerID,
 		Executor:    input.Executor,
+		ProjectName: input.ProjectName,
 		ServiceName: input.ServiceName,
 		Script:      input.HealthcheckCommand,
 		ScriptType:  "healthcheck",

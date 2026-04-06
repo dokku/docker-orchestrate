@@ -1,0 +1,11 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["echo", "migration-complete"]
+    restart: "no"
+    deploy:
+      x-pre-deploy-host-command: |
+        touch /tmp/bats-one-shot-deploy-pre
+      x-post-deploy-host-command: |
+        touch /tmp/bats-one-shot-deploy-post
