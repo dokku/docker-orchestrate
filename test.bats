@@ -658,6 +658,57 @@ teardown() {
   assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
 }
 
+@test "unhealthy containers are replaced first during rolling update" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/unhealthy-priority"
+
+  # Initial deploy with 3 replicas
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-unhealthy-priority --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Wait for all containers to become healthy
+  sleep 6
+
+  # Verify all 3 containers are healthy
+  healthy_count=0
+  for id in $(docker ps -q --filter "label=com.docker.compose.project=bats-unhealthy-priority" --filter "status=running"); do
+    health=$(docker inspect --format '{{.State.Health.Status}}' "$id")
+    if [[ "$health" == "healthy" ]]; then
+      healthy_count=$((healthy_count + 1))
+    fi
+  done
+  assert_equal "3" "$healthy_count"
+
+  # Pick one container and make it unhealthy
+  unhealthy_id=$(docker ps -q --filter "label=com.docker.compose.project=bats-unhealthy-priority" --filter "status=running" | head -1)
+  docker exec "$unhealthy_id" rm /tmp/healthy
+
+  # Wait for Docker to mark it unhealthy
+  sleep 6
+
+  # Verify it's actually unhealthy
+  health=$(docker inspect --format '{{.State.Health.Status}}' "$unhealthy_id")
+  assert_equal "unhealthy" "$health"
+
+  # Redeploy (rolling update)
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-unhealthy-priority --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify the output contains the prioritization message
+  assert_output_contains "Prioritizing 1 unhealthy container(s) for replacement"
+
+  # The unhealthy container should have been replaced (no longer running)
+  run docker ps -q --filter "id=$unhealthy_id" --filter "status=running"
+  assert_equal "" "$output"
+
+  # Verify we still have 3 running containers
+  count=$(docker ps -q --filter "label=com.docker.compose.project=bats-unhealthy-priority" --filter "status=running" | wc -l | tr -d ' ')
+  assert_equal "3" "$count"
+}
+
 @test "one-shot service (restart: no) runs to completion" {
   cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-success"
 

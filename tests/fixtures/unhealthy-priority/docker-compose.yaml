@@ -1,0 +1,17 @@
+---
+services:
+  web:
+    image: nginx:latest
+    command: ["sh", "-c", "touch /tmp/healthy && nginx -g 'daemon off;'"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/healthy"]
+      interval: 1s
+      timeout: 2s
+      retries: 3
+      start_period: 1s
+    deploy:
+      replicas: 3
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 10s

@@ -1204,6 +1204,72 @@ func sortContainersByCreationTime(containers []container.Summary, newestFirst bo
 	})
 }
 
+// containerSortInfo holds the health and restart state for sorting containers
+type containerSortInfo struct {
+	isUnhealthy  bool
+	restartCount int
+}
+
+// sortContainersByHealthThenCreationTime sorts containers by health status (unhealthy first),
+// then by restart count (most restarts first), then by creation time (oldest first).
+// Returns the number of unhealthy containers found.
+func sortContainersByHealthThenCreationTime(ctx context.Context, client DockerClientInterface, containers []container.Summary) int {
+	if len(containers) == 0 {
+		return 0
+	}
+
+	// Inspect each container to get health status and restart count
+	info := make(map[string]containerSortInfo, len(containers))
+	unhealthyCount := 0
+	for _, c := range containers {
+		si := containerSortInfo{}
+		resp, err := client.ContainerInspect(ctx, c.ID)
+		if err == nil && resp.ContainerJSONBase != nil {
+			si.restartCount = resp.RestartCount
+			if resp.ContainerJSONBase.State != nil &&
+				resp.ContainerJSONBase.State.Health != nil &&
+				resp.ContainerJSONBase.State.Health.Status == "unhealthy" {
+				si.isUnhealthy = true
+				unhealthyCount++
+			}
+		}
+		info[c.ID] = si
+	}
+
+	slices.SortFunc(containers, func(a, b container.Summary) int {
+		ai := info[a.ID]
+		bi := info[b.ID]
+
+		// Primary: unhealthy before healthy
+		if ai.isUnhealthy && !bi.isUnhealthy {
+			return -1
+		}
+		if !ai.isUnhealthy && bi.isUnhealthy {
+			return 1
+		}
+
+		// Secondary: more restarts first
+		if ai.restartCount > bi.restartCount {
+			return -1
+		}
+		if ai.restartCount < bi.restartCount {
+			return 1
+		}
+
+		// Tertiary: oldest first
+		if a.Created < b.Created {
+			return -1
+		}
+		if a.Created > b.Created {
+			return 1
+		}
+
+		return 0
+	})
+
+	return unhealthyCount
+}
+
 // ContainerNameTemplateData is the data structure for container name templates
 type ContainerNameTemplateData struct {
 	// ProjectName is the name of the project

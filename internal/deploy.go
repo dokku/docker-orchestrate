@@ -625,8 +625,11 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		// Only update up to the target replica count
 		containersToUpdate = containersToUpdate[:replicas]
 	}
-	// sort containersToUpdate by oldest first
-	sortContainersByCreationTime(containersToUpdate, false)
+	// sort containersToUpdate by health status (unhealthy first), then restart count (most first), then oldest first
+	unhealthyCount := sortContainersByHealthThenCreationTime(ctx, input.Client, containersToUpdate)
+	if unhealthyCount > 0 {
+		input.Logger.Info(fmt.Sprintf("Prioritizing %d unhealthy container(s) for replacement", unhealthyCount))
+	}
 
 	var rollingUpdateOutput RollingUpdateOutput
 	if len(containersToUpdate) > 0 {
