@@ -2598,6 +2598,114 @@ func TestDeployServiceBuildFlagNoBuildSection(t *testing.T) {
 	}
 }
 
+func TestDeployServiceWaitAfterHealthy(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("valid x-wait-after-healthy is parsed without error", func(t *testing.T) {
+		buf.Reset()
+		callCount := 0
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Extensions: map[string]interface{}{
+								"x-wait-after-healthy": "5s",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid x-wait-after-healthy returns error", func(t *testing.T) {
+		buf.Reset()
+		callCount := 0
+
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name: "web",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Extensions: map[string]interface{}{
+								"x-wait-after-healthy": "not-a-duration",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		input := DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		}
+
+		err := DeployService(context.Background(), input)
+		if err == nil {
+			t.Fatal("expected error for invalid duration, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid x-wait-after-healthy duration") {
+			t.Errorf("expected error about invalid duration, got: %v", err)
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }

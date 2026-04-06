@@ -323,6 +323,27 @@ services:
 - When `x-healthcheck-wait` is set, the health check timeout becomes `(monitor + x-healthcheck-wait) * 2`, giving enough room for polling plus the wait. The `monitor` field still controls the polling interval.
 - The wait is applied after the container reaches the running state but before the `x-healthcheck-host-command` (if any) is executed.
 
+### Wait After Healthy
+
+The `x-wait-after-healthy` extension adds a delay after a container becomes healthy before proceeding with the deployment (e.g., stopping the old container in a rolling update). This gives reverse proxies (Traefik, nginx-proxy) time to detect the new container and update their routing before the old container is removed.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+        x-wait-after-healthy: "5s"
+```
+
+- The value must be a valid Go duration string (e.g., `"5s"`, `"500ms"`, `"1m30s"`)
+- Applies regardless of whether a Docker healthcheck is defined — the delay happens after all healthcheck validation passes (including `x-healthcheck-host-command` if configured).
+- If not specified, no additional delay is added after the container becomes healthy (existing behavior).
+- The delay is applied per-container, after the healthcheck passes but before the old container's stop sequence begins.
+
 ### Stop Commands
 
 The tool supports several types of stop commands that are executed before and after a container is terminated (e.g., during a rolling update or scale down):
@@ -456,12 +477,13 @@ If a post_start hook fails, the container is treated as failed: the pre-stop cle
 1. Container start
 2. Compose spec `post_start` hooks (commands inside the container)
 3. Docker healthcheck (or `x-healthcheck-wait` for containers without healthchecks) + `x-healthcheck-host-command`
-4. _...service runs..._
-5. `x-pre-stop-host-command` (on the host)
-6. `x-pre-stop-command` (script inside the container)
-7. Compose spec `pre_stop` hooks (commands inside the container)
-8. Container stop + remove
-9. `x-post-stop-host-command` (on the host)
+4. `x-wait-after-healthy` delay (if configured)
+5. _...service runs..._
+6. `x-pre-stop-host-command` (on the host)
+7. `x-pre-stop-command` (script inside the container)
+8. Compose spec `pre_stop` hooks (commands inside the container)
+9. Container stop + remove
+10. `x-post-stop-host-command` (on the host)
 
 #### Detached Execution
 
