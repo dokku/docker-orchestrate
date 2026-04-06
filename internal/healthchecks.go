@@ -33,6 +33,9 @@ type WaitForHealthcheckInput struct {
 	ServiceName string
 	// TickerCh is an optional channel to use for ticking. If nil, time.NewTicker will be used.
 	TickerCh <-chan time.Time
+	// HealthcheckWait is the duration to wait before considering a container without a Docker healthcheck as healthy.
+	// The container must be continuously running for this duration. If it restarts, the timer resets.
+	HealthcheckWait time.Duration
 }
 
 // waitForHealthcheck waits for a container to become healthy using both Docker and script health checks
@@ -66,6 +69,9 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 	}
 
 	maxWaitTime := input.Monitor * 2
+	if input.HealthcheckWait > 0 {
+		maxWaitTime = (input.Monitor + input.HealthcheckWait) * 2
+	}
 	deadline := time.Now().Add(maxWaitTime)
 
 	tickerCh := input.TickerCh
@@ -75,6 +81,8 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 		defer ticker.Stop()
 		tickerCh = ticker.C
 	}
+
+	var healthcheckWaitStart time.Time
 
 	for {
 		select {
@@ -92,10 +100,28 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 
 			// If no health check is configured, consider it healthy if running
 			if containerJSON.State.Health == nil {
-				if containerJSON.State.Running {
-					return nil
+				if !containerJSON.State.Running {
+					if input.HealthcheckWait > 0 {
+						healthcheckWaitStart = time.Time{} // reset timer on restart
+						continue                           // keep polling
+					}
+					return fmt.Errorf("container is not running")
 				}
-				return fmt.Errorf("container is not running")
+
+				// Container is running
+				if input.HealthcheckWait <= 0 {
+					return nil // no wait configured, immediately healthy
+				}
+
+				if healthcheckWaitStart.IsZero() {
+					healthcheckWaitStart = time.Now()
+				}
+
+				if time.Since(healthcheckWaitStart) >= input.HealthcheckWait {
+					return nil // waited long enough, healthy
+				}
+
+				continue // keep polling
 			}
 
 			healthStatus := containerJSON.State.Health.Status

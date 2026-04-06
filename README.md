@@ -250,6 +250,34 @@ services:
 - `--build` can be combined with `--pull` (they are independent concerns)
 - When building, the pre-pull step is skipped since the image is built locally
 
+## Deployment Configuration
+
+`docker-orchestrate` uses the `deploy.update_config` section of a compose service to control rolling update behavior:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        monitor: 5s
+        failure_action: pause
+        max_failure_ratio: 0
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `parallelism` | `1` | Number of containers updated simultaneously per batch |
+| `delay` | `10s` | Delay between update batches |
+| `order` | `start-first` | Update strategy: `start-first` (start new before stopping old) or `stop-first` (stop old before starting new) |
+| `monitor` | `5s` | Health check polling interval. Also determines the health check timeout (`monitor * 2`) for containers with Docker healthchecks |
+| `failure_action` | `pause` | Action on failure. Only `pause` is supported |
+| `max_failure_ratio` | `0` | Maximum allowed failure ratio (0-1) before stopping the update |
+
 ## Script Extensions
 
 In addition to native healthchecks, `docker-orchestrate` supports extended functionality via custom fields within the `update_config` section of a service.
@@ -271,6 +299,29 @@ services:
 ```
 
 The script healthcheck runs after the standard Docker healthcheck (if defined) succeeds.
+
+### Healthcheck Wait
+
+For containers that do not define a Docker healthcheck, `docker-orchestrate` normally considers them healthy as soon as they enter the running state. The `x-healthcheck-wait` extension specifies a duration to wait before treating a container without a healthcheck as healthy, giving it time to start serving traffic.
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        order: start-first
+        x-healthcheck-wait: "10s"
+```
+
+- The value must be a valid Go duration string (e.g., `"5s"`, `"500ms"`, `"1m30s"`)
+- This only applies to containers **without** a Docker healthcheck. Containers with a healthcheck use the standard health status polling.
+- If not specified, containers without a healthcheck are considered healthy immediately when running (existing behavior).
+- The container must be continuously running for the full duration. If the container restarts during the wait, the timer resets.
+- When `x-healthcheck-wait` is set, the health check timeout becomes `(monitor + x-healthcheck-wait) * 2`, giving enough room for polling plus the wait. The `monitor` field still controls the polling interval.
+- The wait is applied after the container reaches the running state but before the `x-healthcheck-host-command` (if any) is executed.
 
 ### Stop Commands
 
@@ -404,7 +455,7 @@ If a post_start hook fails, the container is treated as failed: the pre-stop cle
 
 1. Container start
 2. Compose spec `post_start` hooks (commands inside the container)
-3. Docker healthcheck + `x-healthcheck-host-command`
+3. Docker healthcheck (or `x-healthcheck-wait` for containers without healthchecks) + `x-healthcheck-host-command`
 4. _...service runs..._
 5. `x-pre-stop-host-command` (on the host)
 6. `x-pre-stop-command` (script inside the container)
