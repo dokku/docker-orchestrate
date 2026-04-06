@@ -1799,3 +1799,312 @@ func TestPreStopHooksExecutionOrder(t *testing.T) {
 		}
 	})
 }
+
+func TestRollingUpdateBatchStartFirstWaitAfterHealthy(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("sleeper called with correct duration after healthy", func(t *testing.T) {
+		var sleeperDurations []time.Duration
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			ContainersToUpdate: batch,
+			WaitAfterHealthy:   5 * time.Second,
+			Sleeper: func(d time.Duration) {
+				sleeperDurations = append(sleeperDurations, d)
+			},
+			StopTimeout: 10,
+			TickerCh:    testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found := false
+		for _, d := range sleeperDurations {
+			if d == 5*time.Second {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected sleeper to be called with 5s, got calls: %v", sleeperDurations)
+		}
+	})
+
+	t.Run("no sleep when WaitAfterHealthy is zero", func(t *testing.T) {
+		buf.Reset()
+		var sleeperCalled bool
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			ContainersToUpdate: batch,
+			WaitAfterHealthy:   0,
+			Sleeper: func(d time.Duration) {
+				sleeperCalled = true
+			},
+			StopTimeout: 10,
+			TickerCh:    testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if sleeperCalled {
+			t.Error("expected sleeper not to be called when WaitAfterHealthy is 0")
+		}
+	})
+}
+
+func TestRollingUpdateBatchStopFirstWaitAfterHealthy(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("sleeper called with correct duration after healthy", func(t *testing.T) {
+		var sleeperDurations []time.Duration
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{}, nil
+				}
+				return []container.Summary{
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			ContainersToUpdate: batch,
+			WaitAfterHealthy:   3 * time.Second,
+			Sleeper: func(d time.Duration) {
+				sleeperDurations = append(sleeperDurations, d)
+			},
+			StopTimeout: 10,
+			TickerCh:    testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found := false
+		for _, d := range sleeperDurations {
+			if d == 3*time.Second {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected sleeper to be called with 3s, got calls: %v", sleeperDurations)
+		}
+	})
+}
+
+func TestScaleUpContainersWaitAfterHealthy(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("sleeper called with correct duration after healthy", func(t *testing.T) {
+		var sleeperDurations []time.Duration
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				return []container.Summary{
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		input := ScaleUpContainersInput{
+			Client:          mock,
+			Executor:        executor,
+			Logger:          logger,
+			ProjectName:     "proj",
+			ProjectDir:      "/tmp",
+			ServiceName:     "web",
+			ComposeFiles:    []string{"/tmp/docker-compose.yaml"},
+			Parallelism:     1,
+			CurrentReplicas: 0,
+			DesiredReplicas: 1,
+			WaitAfterHealthy: 4 * time.Second,
+			Sleeper: func(d time.Duration) {
+				sleeperDurations = append(sleeperDurations, d)
+			},
+			TickerCh: testTickerCh(),
+		}
+
+		err := scaleUpContainers(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		found := false
+		for _, d := range sleeperDurations {
+			if d == 4*time.Second {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected sleeper to be called with 4s, got calls: %v", sleeperDurations)
+		}
+	})
+}

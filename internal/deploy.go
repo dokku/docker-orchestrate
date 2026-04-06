@@ -269,6 +269,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 
 	healthcheckHostCommand := ""
 	healthcheckWait := time.Duration(0)
+	waitAfterHealthy := time.Duration(0)
 	preStopHostCommand := ""
 	preStopCommand := ""
 	postStopHostCommand := ""
@@ -284,6 +285,13 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 				return fmt.Errorf("invalid x-healthcheck-wait duration %q: %v", waitStr, err)
 			}
 			healthcheckWait = parsed
+		}
+		if waitStr, ok := updateConfig.Extensions["x-wait-after-healthy"].(string); ok {
+			parsed, err := time.ParseDuration(waitStr)
+			if err != nil {
+				return fmt.Errorf("invalid x-wait-after-healthy duration %q: %v", waitStr, err)
+			}
+			waitAfterHealthy = parsed
 		}
 		if cmd, ok := updateConfig.Extensions["x-pre-stop-host-command"].(string); ok {
 			preStopHostCommand = cmd
@@ -472,6 +480,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			FailureAction:               updateConfig.FailureAction,
 			HealthcheckCommand:          healthcheckHostCommand,
 			HealthcheckWait:             healthcheckWait,
+			WaitAfterHealthy:            waitAfterHealthy,
 			Logger:                      input.Logger,
 			MaxFailureRatio:             maxFailureRatio,
 			Monitor:                     monitor,
@@ -521,6 +530,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			FailureAction:               string(updateConfig.FailureAction),
 			HealthcheckCommand:          healthcheckHostCommand,
 			HealthcheckWait:             healthcheckWait,
+			WaitAfterHealthy:            waitAfterHealthy,
 			Logger:                      input.Logger,
 			MaxFailureRatio:             maxFailureRatio,
 			Monitor:                     monitor,

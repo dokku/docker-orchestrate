@@ -154,6 +154,8 @@ type RollingUpdateInput struct {
 	HealthcheckCommand string
 	// HealthcheckWait is the duration to wait before considering a container without a Docker healthcheck as healthy
 	HealthcheckWait time.Duration
+	// WaitAfterHealthy is the duration to wait after a container becomes healthy before proceeding
+	WaitAfterHealthy time.Duration
 	// Logger is the logger to use
 	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
@@ -401,6 +403,11 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				// We don't return error here because we want to continue with others in batch
 				// but we check failure ratio later
 				return
+			}
+
+			if input.WaitAfterHealthy > 0 {
+				input.Logger.Info(fmt.Sprintf("Waiting after healthy: %v for container %s", input.WaitAfterHealthy, newContainer.ID[:12]))
+				input.Sleeper(input.WaitAfterHealthy)
 			}
 
 			// Pop an old container to stop
@@ -666,6 +673,12 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				})
 				return
 			}
+
+			if input.WaitAfterHealthy > 0 {
+				input.Logger.Info(fmt.Sprintf("Waiting after healthy: %v for container %s", input.WaitAfterHealthy, newContainer.ID[:12]))
+				input.Sleeper(input.WaitAfterHealthy)
+			}
+
 			input.Logger.Info(fmt.Sprintf("Container %s is healthy", newContainer.ID[:12]))
 		}(nc)
 	}
@@ -849,6 +862,8 @@ type ScaleUpContainersInput struct {
 	HealthcheckCommand string
 	// HealthcheckWait is the duration to wait before considering a container without a Docker healthcheck as healthy
 	HealthcheckWait time.Duration
+	// WaitAfterHealthy is the duration to wait after a container becomes healthy before proceeding
+	WaitAfterHealthy time.Duration
 	// Logger is the logger to use
 	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
@@ -867,6 +882,8 @@ type ScaleUpContainersInput struct {
 	PullPolicy string
 	// ServiceName is the name of the service
 	ServiceName string
+	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
+	Sleeper func(time.Duration)
 	// PreStopHostCommand is the command to run before stopping a container (on host)
 	PreStopHostCommand string
 	// PreStopHostCommandDetached indicates if the pre-stop host command should run detached
@@ -888,6 +905,10 @@ type ScaleUpContainersInput struct {
 // scaleUpContainers scales up containers by creating and starting new ones
 func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error {
 	input.Logger.Info(fmt.Sprintf("Scaling up containers: service=%s, current-replicas=%d, parallelism=%d, target-replicas=%d", input.ServiceName, input.CurrentReplicas, input.Parallelism, input.DesiredReplicas))
+
+	if input.Sleeper == nil {
+		input.Sleeper = time.Sleep
+	}
 
 	executor := input.Executor
 	if executor == nil {
@@ -1108,6 +1129,9 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 						ScriptType:  "post-stop",
 						ServiceName: input.ServiceName,
 					})
+				} else if input.WaitAfterHealthy > 0 {
+					input.Logger.Info(fmt.Sprintf("Waiting after healthy: %v for container %s", input.WaitAfterHealthy, c.ID[:12]))
+					input.Sleeper(input.WaitAfterHealthy)
 				}
 			}(c)
 		}
@@ -1134,7 +1158,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 		// Wait for delay between batches (except for the last batch)
 		if i+batchSize < len(createdContainers) && input.Delay > 0 {
 			input.Logger.Info(fmt.Sprintf("Waiting before next batch: %v", input.Delay))
-			time.Sleep(input.Delay)
+			input.Sleeper(input.Delay)
 		}
 	}
 
