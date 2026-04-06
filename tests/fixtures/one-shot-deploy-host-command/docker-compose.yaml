@@ -6,6 +6,6 @@ services:
     restart: "no"
     deploy:
       x-pre-deploy-host-command: |
-        touch /tmp/bats-one-shot-deploy-pre
+        touch /tmp/orch-one-shot-deploy-pre
       x-post-deploy-host-command: |
-        touch /tmp/bats-one-shot-deploy-post
+        touch /tmp/orch-one-shot-deploy-post

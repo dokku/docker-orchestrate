@@ -10,4 +10,4 @@ services:
         monitor: 5s
         x-pre-stop-host-command: |
           #!/bin/sh
-          touch /tmp/bats-shebang-sh-completed
+          touch /tmp/orch-shebang-sh-completed

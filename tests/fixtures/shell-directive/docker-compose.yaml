@@ -17,4 +17,4 @@ services:
           echo -n "script-ran" > /tmp/bats-output/executed
           [[ -n "$$BASH_VERSION" ]] && echo -n "bash-ok" > /tmp/bats-output/result
         x-pre-stop-host-command: |
-          touch /tmp/bats-shell-directive-host-completed
+          touch /tmp/orch-shell-directive-host-completed

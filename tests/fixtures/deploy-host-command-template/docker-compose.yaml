@@ -5,8 +5,8 @@ services:
     deploy:
       replicas: 1
       x-pre-deploy-host-command: |
-        echo "{{.ServiceName}}" > /tmp/bats-deploy-template-service
-        echo "{{.ProjectName}}" > /tmp/bats-deploy-template-project
+        echo "{{.ServiceName}}" > /tmp/orch-deploy-template-service
+        echo "{{.ProjectName}}" > /tmp/orch-deploy-template-project
       update_config:
         order: start-first
         delay: 0s

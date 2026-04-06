@@ -9,7 +9,7 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-host-command: |
-          touch /tmp/bats-detached-pre-stop-started
+          touch /tmp/orch-detached-pre-stop-started
           sleep 15
-          touch /tmp/bats-detached-pre-stop-completed
+          touch /tmp/orch-detached-pre-stop-completed
         x-pre-stop-host-command-detached: true

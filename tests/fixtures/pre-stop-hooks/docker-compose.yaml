@@ -24,8 +24,8 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-host-command: |
-          touch /tmp/bats-pre-stop-hooks-host-completed
+          touch /tmp/orch-pre-stop-hooks-host-completed
         x-pre-stop-command: |
           echo -n "script-ran" > /tmp/bats-output/pre-stop-cmd
         x-post-stop-host-command: |
-          touch /tmp/bats-pre-stop-hooks-post-completed
+          touch /tmp/orch-pre-stop-hooks-post-completed

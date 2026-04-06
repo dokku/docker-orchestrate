@@ -5,9 +5,9 @@ services:
     deploy:
       replicas: 1
       x-post-deploy-host-command: |
-        touch /tmp/bats-detached-post-deploy-started
+        touch /tmp/orch-detached-post-deploy-started
         sleep 30
-        touch /tmp/bats-detached-post-deploy-completed
+        touch /tmp/orch-detached-post-deploy-completed
       x-post-deploy-host-command-detached: true
       update_config:
         order: start-first

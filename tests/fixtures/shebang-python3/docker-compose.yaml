@@ -11,4 +11,4 @@ services:
         x-pre-stop-host-command: |
           #!/usr/bin/env python3
           import pathlib
-          pathlib.Path("/tmp/bats-shebang-python3-completed").touch()
+          pathlib.Path("/tmp/orch-shebang-python3-completed").touch()

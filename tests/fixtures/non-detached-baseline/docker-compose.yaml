@@ -9,10 +9,10 @@ services:
         delay: 0s
         monitor: 5s
         x-pre-stop-host-command: |
-          touch /tmp/bats-sync-pre-started
+          touch /tmp/orch-sync-pre-started
           sleep 1
-          touch /tmp/bats-sync-pre-completed
+          touch /tmp/orch-sync-pre-completed
         x-post-stop-host-command: |
-          touch /tmp/bats-sync-post-started
+          touch /tmp/orch-sync-post-started
           sleep 1
-          touch /tmp/bats-sync-post-completed
+          touch /tmp/orch-sync-post-completed

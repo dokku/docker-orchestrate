@@ -1,8 +1,8 @@
 ---
 x-pre-deploy-host-command: |
-  date +%s%N > /tmp/bats-deploy-combined-project-pre-time
+  date +%s%N > /tmp/orch-deploy-combined-project-pre-time
 x-post-deploy-host-command: |
-  date +%s%N > /tmp/bats-deploy-combined-project-post-time
+  date +%s%N > /tmp/orch-deploy-combined-project-post-time
 
 services:
   web:
@@ -10,9 +10,9 @@ services:
     deploy:
       replicas: 1
       x-pre-deploy-host-command: |
-        date +%s%N > /tmp/bats-deploy-combined-service-pre-time
+        date +%s%N > /tmp/orch-deploy-combined-service-pre-time
       x-post-deploy-host-command: |
-        date +%s%N > /tmp/bats-deploy-combined-service-post-time
+        date +%s%N > /tmp/orch-deploy-combined-service-post-time
       update_config:
         order: start-first
         delay: 0s

@@ -5,7 +5,7 @@ services:
     deploy:
       replicas: 1
       x-post-deploy-host-command: |
-        touch /tmp/bats-post-deploy-completed
+        touch /tmp/orch-post-deploy-completed
       update_config:
         order: start-first
         delay: 0s

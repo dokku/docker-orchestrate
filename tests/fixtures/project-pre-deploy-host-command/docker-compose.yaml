@@ -1,6 +1,6 @@
 ---
 x-pre-deploy-host-command: |
-  touch /tmp/bats-project-pre-deploy-started
+  touch /tmp/orch-project-pre-deploy-started
 
 services:
   web:
