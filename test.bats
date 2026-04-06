@@ -114,7 +114,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -143,7 +143,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-stop web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-stop --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -172,7 +172,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-both web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-both --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -204,7 +204,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-sync web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-sync --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -225,7 +225,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -241,7 +241,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -258,7 +258,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -274,7 +274,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -291,7 +291,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
