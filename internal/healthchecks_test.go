@@ -134,6 +134,153 @@ func TestWaitForDockerHealthCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("no healthcheck running with healthcheck wait", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+		}
+
+		healthcheckWait := 50 * time.Millisecond
+		tickerCh := make(chan time.Time, 10)
+
+		input := WaitForHealthcheckInput{
+			Client:          mockClient,
+			ContainerID:     "test-id",
+			Monitor:         10 * time.Millisecond,
+			TickerCh:        tickerCh,
+			HealthcheckWait: healthcheckWait,
+		}
+
+		// Send first tick — should not return yet
+		tickerCh <- time.Now()
+
+		startTime := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			done <- waitForDockerHealthCheck(ctx, input)
+		}()
+
+		// Send ticks periodically until the wait elapses
+		go func() {
+			for i := 0; i < 20; i++ {
+				time.Sleep(10 * time.Millisecond)
+				tickerCh <- time.Now()
+			}
+		}()
+
+		err := <-done
+		elapsed := time.Since(startTime)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if elapsed < healthcheckWait {
+			t.Errorf("expected to wait at least %v, but returned after %v", healthcheckWait, elapsed)
+		}
+	})
+
+	t.Run("no healthcheck running without healthcheck wait returns immediately", func(t *testing.T) {
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				callCount++
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+		}
+
+		tickerCh := make(chan time.Time, 1)
+		tickerCh <- time.Now()
+
+		input := WaitForHealthcheckInput{
+			Client:      mockClient,
+			ContainerID: "test-id",
+			Monitor:     1 * time.Second,
+			TickerCh:    tickerCh,
+		}
+
+		err := waitForDockerHealthCheck(ctx, input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 1 {
+			t.Errorf("expected 1 call (immediate return), got %d", callCount)
+		}
+	})
+
+	t.Run("container restarts during healthcheck wait resets timer", func(t *testing.T) {
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				callCount++
+				running := true
+				// Simulate restart: not running on call 2
+				if callCount == 2 {
+					running = false
+				}
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: running,
+						},
+					},
+				}, nil
+			},
+		}
+
+		healthcheckWait := 80 * time.Millisecond
+		tickerCh := make(chan time.Time, 30)
+
+		input := WaitForHealthcheckInput{
+			Client:          mockClient,
+			ContainerID:     "test-id",
+			Monitor:         10 * time.Millisecond,
+			TickerCh:        tickerCh,
+			HealthcheckWait: healthcheckWait,
+		}
+
+		startTime := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			done <- waitForDockerHealthCheck(ctx, input)
+		}()
+
+		// Send ticks periodically
+		go func() {
+			for i := 0; i < 40; i++ {
+				time.Sleep(10 * time.Millisecond)
+				tickerCh <- time.Now()
+			}
+		}()
+
+		err := <-done
+		elapsed := time.Since(startTime)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The restart at call 2 (~20ms) should reset the timer,
+		// so total time should be longer than a single healthcheckWait
+		if elapsed < healthcheckWait {
+			t.Errorf("expected to wait at least %v due to restart, but returned after %v", healthcheckWait, elapsed)
+		}
+		if callCount < 3 {
+			t.Errorf("expected at least 3 inspect calls (restart should cause more polling), got %d", callCount)
+		}
+	})
+
 	t.Run("timeout", func(t *testing.T) {
 		mockClient := &mockDockerClient{
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {

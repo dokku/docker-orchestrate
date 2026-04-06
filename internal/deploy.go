@@ -268,6 +268,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	healthcheckHostCommand := ""
+	healthcheckWait := time.Duration(0)
 	preStopHostCommand := ""
 	preStopCommand := ""
 	postStopHostCommand := ""
@@ -276,6 +277,13 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if updateConfig.Extensions != nil {
 		if cmd, ok := updateConfig.Extensions["x-healthcheck-host-command"].(string); ok {
 			healthcheckHostCommand = cmd
+		}
+		if waitStr, ok := updateConfig.Extensions["x-healthcheck-wait"].(string); ok {
+			parsed, err := time.ParseDuration(waitStr)
+			if err != nil {
+				return fmt.Errorf("invalid x-healthcheck-wait duration %q: %v", waitStr, err)
+			}
+			healthcheckWait = parsed
 		}
 		if cmd, ok := updateConfig.Extensions["x-pre-stop-host-command"].(string); ok {
 			preStopHostCommand = cmd
@@ -463,6 +471,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			Executor:                    executor,
 			FailureAction:               updateConfig.FailureAction,
 			HealthcheckCommand:          healthcheckHostCommand,
+			HealthcheckWait:             healthcheckWait,
 			Logger:                      input.Logger,
 			MaxFailureRatio:             maxFailureRatio,
 			Monitor:                     monitor,
@@ -511,6 +520,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			ExistingContainers:          updatedContainers,
 			FailureAction:               string(updateConfig.FailureAction),
 			HealthcheckCommand:          healthcheckHostCommand,
+			HealthcheckWait:             healthcheckWait,
 			Logger:                      input.Logger,
 			MaxFailureRatio:             maxFailureRatio,
 			Monitor:                     monitor,

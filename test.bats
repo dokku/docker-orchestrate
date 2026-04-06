@@ -97,7 +97,7 @@ setup() {
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -605,6 +605,33 @@ teardown() {
 
   # Verify container is running
   run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-build" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "x-healthcheck-wait delays before treating container as healthy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/healthcheck-wait"
+
+  # Record start time
+  start_time=$(date +%s)
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-healthcheck-wait web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Record end time
+  end_time=$(date +%s)
+  elapsed=$((end_time - start_time))
+
+  # The deploy should take at least 3 seconds due to x-healthcheck-wait
+  # (we check >= 2 to allow for timing variance)
+  if [[ "$elapsed" -lt 2 ]]; then
+    flunk "expected deploy to take at least 2s due to x-healthcheck-wait, took ${elapsed}s"
+  fi
+
+  # Verify the container is running
+  run docker ps --filter "label=com.docker.compose.project=bats-healthcheck-wait" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
 }

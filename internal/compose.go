@@ -152,6 +152,8 @@ type RollingUpdateInput struct {
 	FailureAction string
 	// HealthcheckCommand is the command to run for health checks
 	HealthcheckCommand string
+	// HealthcheckWait is the duration to wait before considering a container without a Docker healthcheck as healthy
+	HealthcheckWait time.Duration
 	// Logger is the logger to use
 	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
@@ -336,6 +338,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 				ContainerID:        newContainer.ID,
 				Executor:           input.Executor,
 				HealthcheckCommand: input.HealthcheckCommand,
+				HealthcheckWait:    input.HealthcheckWait,
 				Monitor:            input.Monitor,
 				ServiceName:        input.ServiceName,
 				TickerCh:           input.TickerCh,
@@ -623,6 +626,7 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				ContainerID:        newContainer.ID,
 				Executor:           input.Executor,
 				HealthcheckCommand: input.HealthcheckCommand,
+				HealthcheckWait:    input.HealthcheckWait,
 				Monitor:            input.Monitor,
 				ServiceName:        input.ServiceName,
 				TickerCh:           input.TickerCh,
@@ -843,6 +847,8 @@ type ScaleUpContainersInput struct {
 	FailureAction string
 	// HealthcheckCommand is the command to run for health checks
 	HealthcheckCommand string
+	// HealthcheckWait is the duration to wait before considering a container without a Docker healthcheck as healthy
+	HealthcheckWait time.Duration
 	// Logger is the logger to use
 	Logger *command.ZerologUi
 	// MaxFailureRatio is the maximum allowed failure ratio
@@ -1041,6 +1047,7 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 					ContainerID:        c.ID,
 					Executor:           executor,
 					HealthcheckCommand: input.HealthcheckCommand,
+					HealthcheckWait:    input.HealthcheckWait,
 					Monitor:            input.Monitor,
 					ServiceName:        input.ServiceName,
 					TickerCh:           input.TickerCh,
