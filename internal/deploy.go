@@ -437,9 +437,15 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
-	// Validate failure_action - only support "pause"
-	if updateConfig.FailureAction != "" && updateConfig.FailureAction != "pause" {
-		return fmt.Errorf("failure_action must be 'pause' (got: %s)", updateConfig.FailureAction)
+	// Validate failure_action - support "pause" and "rollback"
+	if updateConfig.FailureAction != "" && updateConfig.FailureAction != "pause" && updateConfig.FailureAction != "rollback" {
+		return fmt.Errorf("failure_action must be 'pause' or 'rollback' (got: %s)", updateConfig.FailureAction)
+	}
+
+	// Get rollback_config settings
+	var rollbackConfig *types.UpdateConfig
+	if service.Deploy != nil && service.Deploy.RollbackConfig != nil {
+		rollbackConfig = service.Deploy.RollbackConfig
 	}
 
 	// Get defaults
@@ -666,6 +672,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
 			PullPolicy:                  pullPolicy,
+			RollbackConfig:              rollbackConfig,
 			ServiceName:                 input.ServiceName,
 			StopTimeout:                 stopTimeout,
 		})
@@ -716,6 +723,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			PullPolicy:                  pullPolicy,
 			ProjectDir:                  projectDir,
 			ProjectName:                 input.ProjectName,
+			RollbackConfig:              rollbackConfig,
 			ServiceName:                 input.ServiceName,
 			StopTimeout:                 stopTimeout,
 		})

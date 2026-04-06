@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 	"time"
 
@@ -172,6 +173,8 @@ type RollingUpdateInput struct {
 	ProjectName string
 	// PullPolicy is the pull policy to pass to docker compose (always, missing, never)
 	PullPolicy string
+	// RollbackConfig is the optional rollback configuration. Used when FailureAction is "rollback".
+	RollbackConfig *types.UpdateConfig
 	// ServiceName is the name of the service
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
@@ -316,9 +319,230 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var batchErr error
 
-	// Use a channel to distribute old containers to stop
+	if input.FailureAction == "rollback" {
+		type containerPair struct {
+			newContainer container.Summary
+			oldContainer *container.Summary
+			healthy      bool
+		}
+
+		var pairs []containerPair
+		var oldIdx int64
+		for _, nc := range newContainers {
+			wg.Add(1)
+			go func(newContainer container.Summary) {
+				defer wg.Done()
+
+				mu.Lock()
+				output.TotalUpdates++
+				mu.Unlock()
+
+				input.Logger.Info(fmt.Sprintf("Waiting for container to become healthy: %s", newContainer.ID[:12]))
+				healthcheckInput := WaitForHealthcheckInput{
+					Client:             input.Client,
+					ContainerID:        newContainer.ID,
+					Executor:           input.Executor,
+					HealthcheckCommand: input.HealthcheckCommand,
+					HealthcheckWait:    input.HealthcheckWait,
+					Monitor:            input.Monitor,
+					ProjectName:        input.ProjectName,
+					ServiceName:        input.ServiceName,
+					TickerCh:           input.TickerCh,
+				}
+
+				if err := waitForHealthcheck(ctx, healthcheckInput); err != nil {
+					input.Logger.Info(fmt.Sprintf("Container %s failed health check: %v", newContainer.ID[:12], err))
+					if eo, ok := err.(*ErrorWithOutput); ok {
+						lines := strings.Split(eo.Output, "\n")
+						for _, line := range lines {
+							input.Logger.Info(fmt.Sprintf("    %s", line))
+						}
+					}
+
+					mu.Lock()
+					output.Failures++
+					pairs = append(pairs, containerPair{newContainer: newContainer, healthy: false})
+					mu.Unlock()
+
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: newContainer.ID,
+						Detached:    input.PreStopHostCommandDetached,
+						Env:         input.EnvVars,
+						Executor:    input.Executor,
+						ProjectName: input.ProjectName,
+						Script:      input.PreStopHostCommand,
+						ScriptType:  "pre-stop",
+						ServiceName: input.ServiceName,
+					})
+					if input.PreStopCommand != "" {
+						_ = runContainerScript(ctx, RunContainerScriptInput{
+							Client:      input.Client,
+							ContainerID: newContainer.ID,
+							Env:         input.EnvVars,
+							Script:      input.PreStopCommand,
+							ScriptPath:  "/tmp/pre-stop.sh",
+							ServiceName: input.ServiceName,
+						})
+					}
+					_ = runContainerHooks(ctx, RunContainerHooksInput{
+						Client:      input.Client,
+						ContainerID: newContainer.ID,
+						Hooks:       input.PreStopHooks,
+						ServiceName: input.ServiceName,
+					})
+					_ = input.Client.ContainerTerminate(ctx, newContainer.ID, input.StopTimeout)
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: newContainer.ID,
+						Detached:    input.PostStopHostCommandDetached,
+						Env:         input.EnvVars,
+						Executor:    input.Executor,
+						ProjectName: input.ProjectName,
+						Script:      input.PostStopHostCommand,
+						ScriptType:  "post-stop",
+						ServiceName: input.ServiceName,
+					})
+					return
+				}
+
+				if input.WaitAfterHealthy > 0 {
+					input.Logger.Info(fmt.Sprintf("Waiting after healthy: %v for container %s", input.WaitAfterHealthy, newContainer.ID[:12]))
+					input.Sleeper(input.WaitAfterHealthy)
+				}
+
+				idx := int(atomic.AddInt64(&oldIdx, 1)) - 1
+				mu.Lock()
+				if idx < len(batch) {
+					pairs = append(pairs, containerPair{newContainer: newContainer, oldContainer: &batch[idx], healthy: true})
+				} else {
+					pairs = append(pairs, containerPair{newContainer: newContainer, healthy: true})
+				}
+				mu.Unlock()
+
+				input.Logger.Info(fmt.Sprintf("Container %s is healthy, deferring old container cleanup for rollback evaluation", newContainer.ID[:12]))
+			}(nc)
+		}
+
+		wg.Wait()
+
+		failureRatio := float64(output.Failures) / float64(output.TotalUpdates)
+		maxFailureRatioFloat := float64(input.MaxFailureRatio)
+		shouldRollback := output.Failures > 0
+		if maxFailureRatioFloat > 0 && failureRatio <= maxFailureRatioFloat {
+			shouldRollback = false
+		}
+
+		if shouldRollback {
+			input.Logger.Info("Rolling back: terminating new containers and keeping old containers")
+			for _, pair := range pairs {
+				if pair.healthy {
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: pair.newContainer.ID,
+						Detached:    input.PreStopHostCommandDetached,
+						Env:         input.EnvVars,
+						Executor:    input.Executor,
+						ProjectName: input.ProjectName,
+						Script:      input.PreStopHostCommand,
+						ScriptType:  "pre-stop",
+						ServiceName: input.ServiceName,
+					})
+					if input.PreStopCommand != "" {
+						_ = runContainerScript(ctx, RunContainerScriptInput{
+							Client:      input.Client,
+							ContainerID: pair.newContainer.ID,
+							Env:         input.EnvVars,
+							Script:      input.PreStopCommand,
+							ScriptPath:  "/tmp/pre-stop.sh",
+							ServiceName: input.ServiceName,
+						})
+					}
+					_ = runContainerHooks(ctx, RunContainerHooksInput{
+						Client:      input.Client,
+						ContainerID: pair.newContainer.ID,
+						Hooks:       input.PreStopHooks,
+						ServiceName: input.ServiceName,
+					})
+					_ = input.Client.ContainerTerminate(ctx, pair.newContainer.ID, input.StopTimeout)
+					_ = runHostScript(ctx, runScriptInput{
+						Client:      input.Client,
+						ContainerID: pair.newContainer.ID,
+						Detached:    input.PostStopHostCommandDetached,
+						Env:         input.EnvVars,
+						Executor:    input.Executor,
+						ProjectName: input.ProjectName,
+						Script:      input.PostStopHostCommand,
+						ScriptType:  "post-stop",
+						ServiceName: input.ServiceName,
+					})
+				}
+			}
+			if maxFailureRatioFloat > 0 && failureRatio > maxFailureRatioFloat {
+				return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f), rolling back deployment", failureRatio, maxFailureRatioFloat)
+			}
+			return fmt.Errorf("deployment rolled back due to failure (failure_action: rollback)")
+		}
+
+		for _, pair := range pairs {
+			if pair.healthy && pair.oldContainer != nil {
+				oldContainerIdentifier := pair.oldContainer.ID[:12]
+				for _, name := range pair.oldContainer.Names {
+					if n, found := strings.CutPrefix(name, "/"); found {
+						oldContainerIdentifier = n
+						break
+					}
+				}
+
+				input.Logger.Info(fmt.Sprintf("Batch successful, stopping old container %s", oldContainerIdentifier))
+				_ = runHostScript(ctx, runScriptInput{
+					Client:      input.Client,
+					ContainerID: pair.oldContainer.ID,
+					Detached:    input.PreStopHostCommandDetached,
+					Env:         input.EnvVars,
+					Executor:    input.Executor,
+					ProjectName: input.ProjectName,
+					Script:      input.PreStopHostCommand,
+					ScriptType:  "pre-stop",
+					ServiceName: input.ServiceName,
+				})
+				if input.PreStopCommand != "" {
+					_ = runContainerScript(ctx, RunContainerScriptInput{
+						Client:      input.Client,
+						ContainerID: pair.oldContainer.ID,
+						Env:         input.EnvVars,
+						Script:      input.PreStopCommand,
+						ScriptPath:  "/tmp/pre-stop.sh",
+						ServiceName: input.ServiceName,
+					})
+				}
+				_ = runContainerHooks(ctx, RunContainerHooksInput{
+					Client:      input.Client,
+					ContainerID: pair.oldContainer.ID,
+					Hooks:       input.PreStopHooks,
+					ServiceName: input.ServiceName,
+				})
+				if err := input.Client.ContainerTerminate(ctx, pair.oldContainer.ID, input.StopTimeout); err != nil {
+					input.Logger.Info(fmt.Sprintf("Error stopping old container %s: %v", oldContainerIdentifier, err))
+				}
+				_ = runHostScript(ctx, runScriptInput{
+					Client:      input.Client,
+					ContainerID: pair.oldContainer.ID,
+					Detached:    input.PostStopHostCommandDetached,
+					Env:         input.EnvVars,
+					Executor:    input.Executor,
+					ProjectName: input.ProjectName,
+					Script:      input.PostStopHostCommand,
+					ScriptType:  "post-stop",
+					ServiceName: input.ServiceName,
+				})
+			}
+		}
+
+		return nil
+	}
+
 	oldContainersToStop := make(chan container.Summary, len(batch))
 	for _, c := range batch {
 		oldContainersToStop <- c
@@ -491,7 +715,7 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 		return fmt.Errorf("deployment paused due to failure (failure_action: pause)")
 	}
 
-	return batchErr
+	return nil
 }
 
 // rollingUpdateBatchStopFirst stops the old containers first
@@ -539,6 +763,16 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 				Hooks:       input.PreStopHooks,
 				ServiceName: input.ServiceName,
 			})
+
+			if input.FailureAction == "rollback" {
+				timeoutSeconds := input.StopTimeout
+				err := input.Client.ContainerStop(stopCtx, containerID, container.StopOptions{Timeout: &timeoutSeconds})
+				if err != nil {
+					return fmt.Errorf("error stopping container %s: %v", containerIdentifier, err)
+				}
+				return nil
+			}
+
 			err := input.Client.ContainerTerminate(stopCtx, containerID, input.StopTimeout)
 			_ = runHostScript(ctx, runScriptInput{
 				Client:      input.Client,
@@ -556,6 +790,9 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	}
 
 	if err := g.Wait(); err != nil {
+		if input.FailureAction == "rollback" {
+			return fmt.Errorf("error stopping containers in batch during rollback: %v", err)
+		}
 		return fmt.Errorf("error stopping containers in batch: %v", err)
 	}
 
@@ -589,6 +826,15 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 		WorkingDirectory: input.ProjectDir,
 	})
 	if err != nil {
+		if input.FailureAction == "rollback" {
+			input.Logger.Info("Rolling back: restarting old containers after failed container creation")
+			for _, oldContainer := range batch {
+				if startErr := input.Client.ContainerStart(ctx, oldContainer.ID, container.StartOptions{}); startErr != nil {
+					input.Logger.Info(fmt.Sprintf("Warning: failed to restart old container %s during rollback: %v", oldContainer.ID[:12], startErr))
+				}
+			}
+			return fmt.Errorf("deployment rolled back due to container creation failure (failure_action: rollback): %v", err)
+		}
 		return fmt.Errorf("error starting new containers: %v", err)
 	}
 
@@ -698,6 +944,48 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	// Check failure ratio
 	failureRatio := float64(output.Failures) / float64(output.TotalUpdates)
 	maxFailureRatioFloat := float64(input.MaxFailureRatio)
+
+	if input.FailureAction == "rollback" {
+		shouldRollback := output.Failures > 0
+		if maxFailureRatioFloat > 0 && failureRatio <= maxFailureRatioFloat {
+			shouldRollback = false
+		}
+
+		if shouldRollback {
+			input.Logger.Info("Rolling back: restarting old containers and terminating new containers")
+			for _, oldContainer := range batch {
+				if err := input.Client.ContainerStart(ctx, oldContainer.ID, container.StartOptions{}); err != nil {
+					input.Logger.Info(fmt.Sprintf("Warning: failed to restart old container %s during rollback: %v", oldContainer.ID[:12], err))
+				}
+			}
+			for _, nc := range newContainers {
+				_ = input.Client.ContainerTerminate(ctx, nc.ID, input.StopTimeout)
+			}
+			if maxFailureRatioFloat > 0 && failureRatio > maxFailureRatioFloat {
+				return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f), rolling back deployment", failureRatio, maxFailureRatioFloat)
+			}
+			return fmt.Errorf("deployment rolled back due to failure (failure_action: rollback)")
+		}
+
+		for _, oldContainer := range batch {
+			if err := input.Client.ContainerRemove(ctx, oldContainer.ID, container.RemoveOptions{RemoveVolumes: true}); err != nil {
+				input.Logger.Info(fmt.Sprintf("Warning: failed to remove old container %s: %v", oldContainer.ID[:12], err))
+			}
+			_ = runHostScript(ctx, runScriptInput{
+				Client:      input.Client,
+				ContainerID: oldContainer.ID,
+				Detached:    input.PostStopHostCommandDetached,
+				Env:         input.EnvVars,
+				Executor:    input.Executor,
+				ProjectName: input.ProjectName,
+				Script:      input.PostStopHostCommand,
+				ScriptType:  "post-stop",
+				ServiceName: input.ServiceName,
+			})
+		}
+		return nil
+	}
+
 	if maxFailureRatioFloat > 0 && failureRatio > maxFailureRatioFloat {
 		if input.FailureAction == "pause" {
 			return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f), pausing deployment", failureRatio, maxFailureRatioFloat)
@@ -892,6 +1180,8 @@ type ScaleUpContainersInput struct {
 	ProjectName string
 	// PullPolicy is the pull policy to pass to docker compose (always, missing, never)
 	PullPolicy string
+	// RollbackConfig is the optional rollback configuration. Used when FailureAction is "rollback".
+	RollbackConfig *types.UpdateConfig
 	// ServiceName is the name of the service
 	ServiceName string
 	// Sleeper is the function to use for sleeping. If nil, time.Sleep will be used.
@@ -1161,11 +1451,18 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 			if input.FailureAction == "pause" {
 				return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f), pausing deployment", failureRatio, maxFailureRatioFloat)
 			}
+			if input.FailureAction == "rollback" {
+				return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f), rolling back deployment during scale-up", failureRatio, maxFailureRatioFloat)
+			}
 			return fmt.Errorf("max failure ratio exceeded (%.2f > %.2f)", failureRatio, maxFailureRatioFloat)
 		}
 
 		if input.FailureAction == "pause" && failures > 0 {
 			return fmt.Errorf("deployment paused due to failure (failure_action: pause)")
+		}
+
+		if input.FailureAction == "rollback" && failures > 0 {
+			return fmt.Errorf("deployment rolled back due to failure during scale-up (failure_action: rollback)")
 		}
 
 		if batchErr != nil && input.MaxFailureRatio == 0 {
