@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
 	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
@@ -1265,13 +1267,21 @@ func TestDeployServicePreStopHooks(t *testing.T) {
 				}
 				if callCount == 1 {
 					callCount++
-					// Running containers for rename
+					// Config hash check (running containers)
 					return []container.Summary{
 						{ID: "container1_id_long", Names: []string{"/container1"}, State: "running", Created: 100},
 						{ID: "container2_id_long", Names: []string{"/container2"}, State: "running", Created: 200},
 					}, nil
 				}
 				if callCount == 2 {
+					callCount++
+					// Running containers for rename
+					return []container.Summary{
+						{ID: "container1_id_long", Names: []string{"/container1"}, State: "running", Created: 100},
+						{ID: "container2_id_long", Names: []string{"/container2"}, State: "running", Created: 200},
+					}, nil
+				}
+				if callCount == 3 {
 					callCount++
 					// Running containers for scale down check (2 running, want 1)
 					return []container.Summary{
@@ -1381,12 +1391,12 @@ func TestDeployServicePostStartHooks(t *testing.T) {
 		mockClient := &mockDockerClient{
 			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 				callCount++
-				// Calls 1-5: all containers check, rename, currentContainers, containersToUpdate, updatedContainers
+				// Calls 1-6: all containers check, config hash check, rename, currentContainers, containersToUpdate, updatedContainers
 				// All return empty to force scale-up path (0 existing → 1 desired)
-				if callCount <= 5 {
+				if callCount <= 6 {
 					return []container.Summary{}, nil
 				}
-				// Call 6+: after docker compose create and final count - return the new container
+				// Call 7+: after docker compose create and final count - return the new container
 				return []container.Summary{
 					{ID: "new1_container_id_long", Names: []string{"/new1"}, State: "running", Created: 100},
 				}, nil
@@ -2882,22 +2892,23 @@ func TestDeployOneShotService(t *testing.T) {
 	})
 
 	t.Run("no_docker_client_calls", func(t *testing.T) {
-		clientCalled := false
+		removeCalled := false
+		renameCalled := false
+		terminateCalled := false
 		mockClient := &mockDockerClient{
 			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
-				clientCalled = true
 				return []container.Summary{}, nil
 			},
 			containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
-				clientCalled = true
+				removeCalled = true
 				return nil
 			},
 			containerRename: func(ctx context.Context, id, name string) error {
-				clientCalled = true
+				renameCalled = true
 				return nil
 			},
 			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
-				clientCalled = true
+				terminateCalled = true
 				return nil
 			},
 		}
@@ -2931,8 +2942,14 @@ func TestDeployOneShotService(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if clientCalled {
-			t.Error("expected no Docker client calls for one-shot service")
+		if removeCalled {
+			t.Error("expected no container remove calls for one-shot service")
+		}
+		if renameCalled {
+			t.Error("expected no container rename calls for one-shot service")
+		}
+		if terminateCalled {
+			t.Error("expected no container terminate calls for one-shot service")
 		}
 	})
 
@@ -3278,6 +3295,10 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 				operationOrder = append(operationOrder, "container_list")
 				return []container.Summary{}, nil
 			},
+			containerRename: func(ctx context.Context, id, name string) error {
+				operationOrder = append(operationOrder, "container_rename")
+				return nil
+			},
 		}
 
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
@@ -3316,19 +3337,29 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if len(operationOrder) < 2 {
-			t.Fatalf("expected at least 2 operations, got %d: %v", len(operationOrder), operationOrder)
+		// Find the pre-deploy-script and verify it appears before docker-compose operations
+		preDeployIdx := -1
+		dockerComposeIdx := -1
+		for i, op := range operationOrder {
+			if op == "pre-deploy-script" && preDeployIdx == -1 {
+				preDeployIdx = i
+			}
+			if op == "docker-compose" && dockerComposeIdx == -1 {
+				dockerComposeIdx = i
+			}
 		}
-		if operationOrder[0] != "pre-deploy-script" {
-			t.Errorf("expected first operation to be pre-deploy-script, got %s, order: %v", operationOrder[0], operationOrder)
+		if preDeployIdx == -1 {
+			t.Errorf("expected pre-deploy-script in operations, got: %v", operationOrder)
+		}
+		if dockerComposeIdx != -1 && preDeployIdx > dockerComposeIdx {
+			t.Errorf("expected pre-deploy-script before docker-compose, got order: %v", operationOrder)
 		}
 	})
 
 	t.Run("pre-deploy failure aborts deployment", func(t *testing.T) {
-		containerListCalled := false
+		dockerComposeRan := false
 		mockClient := &mockDockerClient{
 			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
-				containerListCalled = true
 				return []container.Summary{}, nil
 			},
 		}
@@ -3337,6 +3368,7 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 			if len(input.Args) > 0 && input.Args[0] == "-c" {
 				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("exit status 1")
 			}
+			dockerComposeRan = true
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
@@ -3369,8 +3401,8 @@ func TestDeployServicePreDeployHostCommand(t *testing.T) {
 		if !strings.Contains(err.Error(), "pre-deploy host command failed") {
 			t.Errorf("expected pre-deploy error, got: %v", err)
 		}
-		if containerListCalled {
-			t.Error("container list should not have been called after pre-deploy failure")
+		if dockerComposeRan {
+			t.Error("docker compose should not have been called after pre-deploy failure")
 		}
 	})
 }
@@ -3995,6 +4027,294 @@ func TestDeployServiceNoDeployConfig(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestServiceConfigUnchanged(t *testing.T) {
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		force          bool
+		build          bool
+		containers     []container.Summary
+		replicas       int
+		expectedResult bool
+	}{
+		{
+			name:           "no_containers_always_deploy",
+			containers:     []container.Summary{},
+			replicas:       1,
+			expectedResult: false,
+		},
+		{
+			name: "all_hashes_match_same_replica_count",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       1,
+			expectedResult: true,
+		},
+		{
+			name: "hash_mismatch",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
+			},
+			replicas:       1,
+			expectedResult: false,
+		},
+		{
+			name: "replica_count_mismatch",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       3,
+			expectedResult: false,
+		},
+		{
+			name: "partial_hash_match",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "bbb_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
+			},
+			replicas:       2,
+			expectedResult: false,
+		},
+		{
+			name:  "force_always_deploys",
+			force: true,
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       1,
+			expectedResult: false,
+		},
+		{
+			name:  "build_always_deploys",
+			build: true,
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       1,
+			expectedResult: false,
+		},
+		{
+			name: "missing_label_proceeds",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{}},
+			},
+			replicas:       1,
+			expectedResult: false,
+		},
+		{
+			name: "multiple_containers_all_match",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "bbb_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "ccc_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       3,
+			expectedResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := &command.ZerologUi{
+				StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+				OriginalFields:    nil,
+				Ui:                nil,
+				OutputIndentField: false,
+			}
+
+			mockClient := &mockDockerClient{
+				containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+					return tt.containers, nil
+				},
+			}
+
+			result, err := serviceConfigUnchanged(context.Background(), ServiceConfigUnchangedInput{
+				Build:       tt.build,
+				Client:      mockClient,
+				Force:       tt.force,
+				Logger:      logger,
+				ProjectName: "test",
+				Replicas:    tt.replicas,
+				Service:     &service,
+				ServiceName: "web",
+			})
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result != tt.expectedResult {
+				t.Errorf("expected %v, got %v", tt.expectedResult, result)
+			}
+
+			if tt.expectedResult {
+				output := buf.String()
+				if !strings.Contains(output, "Skipping unchanged service") {
+					t.Errorf("expected 'Skipping unchanged service' in output, got: %s", output)
+				}
+			}
+		})
+	}
+}
+
+func TestDeployServiceSkipsUnchanged(t *testing.T) {
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	executorCalled := false
+	callCount := 0
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			callCount++
+			// First call: non-running containers cleanup check (no status filter)
+			// Second call: config hash check (status=running)
+			if callCount <= 2 {
+				return []container.Summary{
+					{
+						ID:      "aaa_container_id",
+						State:   "running",
+						Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+						Created: 100,
+					},
+				}, nil
+			}
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executorCalled = true
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": service,
+		},
+	}
+
+	err = DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Skipping unchanged service") {
+		t.Errorf("expected 'Skipping unchanged service' in output, got: %s", output)
+	}
+
+	if executorCalled {
+		t.Errorf("expected executor to not be called when service is unchanged")
+	}
+}
+
+func TestDeployServiceForceOverridesHash(t *testing.T) {
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	callCount := 0
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			callCount++
+			// Return matching containers for all calls
+			return []container.Summary{
+				{
+					ID:      "aaa_container_id",
+					State:   "running",
+					Names:   []string{"/test-web-1"},
+					Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+					Created: 100,
+				},
+			}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": service,
+		},
+	}
+
+	err = DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Force:                 true,
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if strings.Contains(output, "Skipping unchanged service") {
+		t.Errorf("expected 'Skipping unchanged service' NOT in output when force=true, got: %s", output)
 	}
 }
 
