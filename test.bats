@@ -114,7 +114,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -143,7 +143,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-stop web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-stop --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -172,7 +172,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-both web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-both --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -204,7 +204,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-sync web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-sync --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -225,7 +225,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-sh --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -241,7 +241,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-bash --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -258,7 +258,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-dash --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -274,7 +274,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-python3 --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -291,7 +291,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shebang-default --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -311,7 +311,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -405,7 +405,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop-hooks web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop-hooks --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -1094,4 +1094,59 @@ teardown() {
 
   # One-shot should have completed
   assert_output_contains "One-shot service migrate completed successfully"
+}
+
+@test "unchanged service is skipped on second deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/config-hash-skip"
+
+  # First deploy: should proceed normally
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify container is running
+  count=$(docker ps -q --filter "label=com.docker.compose.project=bats-config-hash" --filter "label=com.docker.compose.service=web" | wc -l | tr -d ' ')
+  assert_equal "1" "$count"
+
+  # Second deploy: should skip because config is unchanged
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "Skipping unchanged service"
+}
+
+@test "force flag overrides config hash skip" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/config-hash-skip"
+
+  # First deploy
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash-force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Second deploy with --force: should NOT skip
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash-force --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  [[ "$output" != *"Skipping unchanged service"* ]]
+}
+
+@test "project deploy skips unchanged services" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/config-hash-skip"
+
+  # First deploy: should proceed normally
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash-project
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Second deploy: should skip unchanged services
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-config-hash-project
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "Skipping unchanged service"
 }

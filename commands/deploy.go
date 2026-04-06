@@ -22,6 +22,7 @@ type DeployCommand struct {
 	containerNameTemplate string
 	envFiles              []string
 	files                 []string
+	force                 bool
 	profiles              []string
 	projectDirectory      string
 	projectName           string
@@ -72,6 +73,7 @@ func (c *DeployCommand) ParsedArguments(args []string) (map[string]command.Argum
 func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f := c.Meta.FlagSet(c.Name(), command.FlagSetClient)
 	f.BoolVar(&c.build, "build", false, "build images before deploying")
+	f.BoolVar(&c.force, "force", false, "force deploy even if service config is unchanged")
 	f.IntVar(&c.replicas, "replicas", 0, "the number of replicas to deploy")
 	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
@@ -90,6 +92,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 		complete.Flags{
 			"--build":                   complete.PredictNothing,
 			"--container-name-template": complete.PredictAnything,
+			"--force":                   complete.PredictNothing,
 			"--env-file":                complete.PredictFiles("*"),
 			"--file":                    complete.PredictFiles("*"),
 			"--profiles":                complete.PredictAnything,
@@ -185,6 +188,7 @@ func (c *DeployCommand) Run(args []string) int {
 			ContainerNameTemplate: c.containerNameTemplate,
 			EnvFiles:              c.envFiles,
 			EnvVars:               envVars,
+			Force:                 c.force,
 			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
@@ -207,6 +211,7 @@ func (c *DeployCommand) Run(args []string) int {
 		ContainerNameTemplate: c.containerNameTemplate,
 		EnvFiles:              c.envFiles,
 		EnvVars:               envVars,
+		Force:                 c.force,
 		Logger:                logger,
 		Project:               project,
 		ProjectName:           c.projectName,

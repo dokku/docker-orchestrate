@@ -79,6 +79,13 @@ docker orchestrate deploy --skip-databases
 docker orchestrate deploy web --skip-databases
 ```
 
+Force deploy even when service config is unchanged:
+
+```bash
+docker orchestrate deploy --force
+docker orchestrate deploy web --force
+```
+
 ### Arguments
 
 - `service-name`: The name of a service in the compose file to deploy
@@ -87,6 +94,7 @@ docker orchestrate deploy web --skip-databases
 
 - `--build`: Build images before deploying. When specified, `docker compose build` is run before the rolling update and `--build` is passed to all compose commands. Only applies to services with a `build` section. Can be combined with `--pull`.
 - `--env-file`: Path to an environment variable file for compose file interpolation. Can be specified multiple times. When specified, these files are used instead of the default `.env` file. Environment variables from these files are also available to host scripts and container pre-stop scripts.
+- `--force`: Force deploy even if the service configuration is unchanged. By default, services whose config hash matches all running containers (at the correct replica count) are skipped. The `--build` flag also bypasses this check for services with a `build` section.
 - `-f, --file`: Path to a Compose configuration file. Can be specified multiple times to merge files (defaults to `docker-compose.yaml` or `docker-compose.yml`).
 - `-p, --project-name`: Specify an alternate project name (defaults to the directory name).
 - `--project-directory`: Specify an alternate working directory.
@@ -179,6 +187,25 @@ services:
     image: nginx:alpine
     # This service will be deployed normally
 ```
+
+### Config Hash Comparison
+
+By default, `docker-orchestrate` computes a configuration hash for each service and compares it against the hash stored on running containers (the `com.docker.compose.config-hash` label set by Docker Compose). If all running containers for a service have the same config hash and the replica count matches, the service is skipped.
+
+A service will always be deployed when:
+
+- It has no running containers (first deploy)
+- Any running container has a different config hash
+- The number of running containers does not match the desired replica count
+- The `--force` flag is specified
+- The `--build` flag is specified and the service has a `build` section
+- The pull policy is `always` (via `--pull always` or `pull_policy: always`) and the pulled image differs from the running containers' image
+
+When the pull policy is `always`, the image is pulled first and its digest is compared against the running containers. If the image is the same, the service is still skipped. This ensures upstream image updates are detected while avoiding unnecessary container cycling when the image hasn't changed.
+
+When a service is skipped, per-service pre-deploy and post-deploy host commands are also skipped. Project-level hooks always run regardless.
+
+This optimization avoids unnecessary container cycling, image pulls, and hook execution for services that haven't changed.
 
 ## One-Shot Services
 
