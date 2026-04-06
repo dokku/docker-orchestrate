@@ -1,0 +1,12 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s

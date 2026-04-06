@@ -343,6 +343,42 @@ services:
 - `--build` can be combined with `--pull` (they are independent concerns)
 - When building, the pre-pull step is skipped since the image is built locally
 
+## Anonymous Volume Warnings
+
+During deploy, `docker-orchestrate` inspects the service image for `VOLUME` directives defined in the Dockerfile. If any of those volume paths are not mapped to a named volume or bind mount in the compose file, a warning is logged:
+
+```
+Warning: service 'web' has anonymous volume at /var/lib/data — data will be lost during rolling updates. Use a named volume.
+```
+
+### Why This Matters
+
+When a Dockerfile declares `VOLUME /var/lib/data` and the compose file does not map that path to a named volume:
+
+1. Each new container gets a fresh, empty anonymous volume
+2. During rolling updates, data from old containers' anonymous volumes is **not** transferred to new containers
+3. Old anonymous volumes become orphaned, accumulating on disk
+
+### How to Fix
+
+Add a named volume mapping in your compose file for each image volume path:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    volumes:
+      - app-data:/var/lib/data
+    deploy:
+      update_config:
+        order: start-first
+
+volumes:
+  app-data:
+```
+
+Both named volumes (`type: volume` with a source name) and bind mounts (`type: bind`) suppress the warning, as both persist data across container recreation.
+
 ## Deployment Configuration
 
 `docker-orchestrate` uses the `deploy.update_config` section of a compose service to control rolling update behavior:

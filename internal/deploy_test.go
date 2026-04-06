@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/josegonzalez/cli-skeleton/command"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/rs/zerolog"
 )
 
@@ -4429,6 +4432,137 @@ func TestDeployServiceBuildWithoutBuildSection(t *testing.T) {
 
 	if executorCalled {
 		t.Errorf("expected executor to not be called when service has no build section and config is unchanged")
+	}
+}
+
+func TestWarnAnonymousVolumes(t *testing.T) {
+	makeImageInspect := func(volumes map[string]struct{}) func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+		return func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+			return image.InspectResponse{
+				Config: &dockerspec.DockerOCIImageConfig{
+					ImageConfig: ocispec.ImageConfig{
+						Volumes: volumes,
+					},
+				},
+			}, nil
+		}
+	}
+
+	tests := []struct {
+		name            string
+		imageInspect    func(ctx context.Context, imageID string) (image.InspectResponse, error)
+		serviceImage    string
+		serviceVolumes  []types.ServiceVolumeConfig
+		expectWarnings  []string
+		expectNoWarning bool
+	}{
+		{
+			name:         "image_volume_no_mount",
+			imageInspect: makeImageInspect(map[string]struct{}{"/var/lib/data": {}}),
+			serviceImage: "myimage:latest",
+			expectWarnings: []string{
+				"has anonymous volume at /var/lib/data",
+			},
+		},
+		{
+			name:         "image_volume_anonymous_mount",
+			imageInspect: makeImageInspect(map[string]struct{}{"/var/lib/data": {}}),
+			serviceImage: "myimage:latest",
+			serviceVolumes: []types.ServiceVolumeConfig{
+				{Type: "volume", Source: "", Target: "/var/lib/data"},
+			},
+			expectWarnings: []string{
+				"has anonymous volume at /var/lib/data",
+			},
+		},
+		{
+			name:         "image_volume_named_mount",
+			imageInspect: makeImageInspect(map[string]struct{}{"/var/lib/data": {}}),
+			serviceImage: "myimage:latest",
+			serviceVolumes: []types.ServiceVolumeConfig{
+				{Type: "volume", Source: "mydata", Target: "/var/lib/data"},
+			},
+			expectNoWarning: true,
+		},
+		{
+			name:         "image_volume_bind_mount",
+			imageInspect: makeImageInspect(map[string]struct{}{"/var/lib/data": {}}),
+			serviceImage: "myimage:latest",
+			serviceVolumes: []types.ServiceVolumeConfig{
+				{Type: "bind", Source: "/host/path", Target: "/var/lib/data"},
+			},
+			expectNoWarning: true,
+		},
+		{
+			name:            "no_image_volumes",
+			imageInspect:    makeImageInspect(map[string]struct{}{}),
+			serviceImage:    "myimage:latest",
+			expectNoWarning: true,
+		},
+		{
+			name: "image_inspect_error",
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{}, errors.New("image not found")
+			},
+			serviceImage:    "myimage:latest",
+			expectNoWarning: true,
+		},
+		{
+			name:         "multiple_volumes_mixed",
+			imageInspect: makeImageInspect(map[string]struct{}{"/var/lib/a": {}, "/var/lib/b": {}}),
+			serviceImage: "myimage:latest",
+			serviceVolumes: []types.ServiceVolumeConfig{
+				{Type: "volume", Source: "vol-a", Target: "/var/lib/a"},
+			},
+			expectWarnings: []string{
+				"has anonymous volume at /var/lib/b",
+			},
+		},
+		{
+			name: "nil_config",
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{Config: nil}, nil
+			},
+			serviceImage:    "myimage:latest",
+			expectNoWarning: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockDockerClient{
+				imageInspect: tt.imageInspect,
+			}
+
+			var buf bytes.Buffer
+			logger := &command.ZerologUi{
+				StderrLogger: zerolog.New(&buf).With().Timestamp().Logger(),
+				StdoutLogger: zerolog.New(&buf).With().Timestamp().Logger(),
+			}
+
+			service := &types.ServiceConfig{
+				Name:    "web",
+				Image:   tt.serviceImage,
+				Volumes: tt.serviceVolumes,
+			}
+
+			warnAnonymousVolumes(context.Background(), mockClient, logger, "testproject", "web", service)
+
+			output := buf.String()
+
+			if tt.expectNoWarning {
+				if strings.Contains(output, "has anonymous volume") {
+					t.Errorf("expected no warning, got: %s", output)
+				}
+				return
+			}
+
+			for _, expected := range tt.expectWarnings {
+				if !strings.Contains(output, expected) {
+					t.Errorf("expected warning containing %q, got: %s", expected, output)
+				}
+			}
+		})
 	}
 }
 
