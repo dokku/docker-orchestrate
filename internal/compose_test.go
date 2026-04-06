@@ -2409,3 +2409,417 @@ func TestScaleUpContainersWaitAfterHealthy(t *testing.T) {
 		}
 	})
 }
+
+func TestSortContainersByHealthThenCreationTime(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("unhealthy_first_then_oldest", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "healthy_new", Created: 300},
+			{ID: "unhealthy_old", Created: 100},
+			{ID: "healthy_old", Created: 200},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "unhealthy_old":
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "unhealthy"},
+							},
+						},
+					}, nil
+				default:
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "healthy"},
+							},
+						},
+					}, nil
+				}
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 1 {
+			t.Errorf("expected 1 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy_old" {
+			t.Errorf("expected unhealthy_old first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "healthy_old" {
+			t.Errorf("expected healthy_old second, got %s", containers[1].ID)
+		}
+		if containers[2].ID != "healthy_new" {
+			t.Errorf("expected healthy_new third, got %s", containers[2].ID)
+		}
+	})
+
+	t.Run("all_healthy_falls_back_to_creation_time", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "newest", Created: 300},
+			{ID: "oldest", Created: 100},
+			{ID: "middle", Created: 200},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Health: &container.Health{Status: "healthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 0 {
+			t.Errorf("expected 0 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "oldest" {
+			t.Errorf("expected oldest first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "middle" {
+			t.Errorf("expected middle second, got %s", containers[1].ID)
+		}
+		if containers[2].ID != "newest" {
+			t.Errorf("expected newest third, got %s", containers[2].ID)
+		}
+	})
+
+	t.Run("all_unhealthy_sorted_by_creation_time", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "newest", Created: 300},
+			{ID: "oldest", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Health: &container.Health{Status: "unhealthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 2 {
+			t.Errorf("expected 2 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "oldest" {
+			t.Errorf("expected oldest first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "newest" {
+			t.Errorf("expected newest second, got %s", containers[1].ID)
+		}
+	})
+
+	t.Run("no_healthcheck_treated_as_healthy", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "no_healthcheck", Created: 200},
+			{ID: "unhealthy", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "unhealthy":
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "unhealthy"},
+							},
+						},
+					}, nil
+				default:
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: nil,
+							},
+						},
+					}, nil
+				}
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 1 {
+			t.Errorf("expected 1 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy" {
+			t.Errorf("expected unhealthy first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "no_healthcheck" {
+			t.Errorf("expected no_healthcheck second, got %s", containers[1].ID)
+		}
+	})
+
+	t.Run("inspect_error_treated_as_healthy", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "error_container", Created: 200},
+			{ID: "unhealthy", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "unhealthy":
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "unhealthy"},
+							},
+						},
+					}, nil
+				default:
+					return container.InspectResponse{}, errors.New("inspect failed")
+				}
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 1 {
+			t.Errorf("expected 1 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy" {
+			t.Errorf("expected unhealthy first, got %s", containers[0].ID)
+		}
+	})
+
+	t.Run("starting_treated_as_healthy", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "starting_container", Created: 200},
+			{ID: "unhealthy", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "unhealthy":
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "unhealthy"},
+							},
+						},
+					}, nil
+				default:
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{
+								Health: &container.Health{Status: "starting"},
+							},
+						},
+					}, nil
+				}
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 1 {
+			t.Errorf("expected 1 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy" {
+			t.Errorf("expected unhealthy first, got %s", containers[0].ID)
+		}
+	})
+
+	t.Run("empty_containers", func(t *testing.T) {
+		containers := []container.Summary{}
+		mock := &mockDockerClient{}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 0 {
+			t.Errorf("expected 0 unhealthy, got %d", count)
+		}
+		if len(containers) != 0 {
+			t.Errorf("expected empty slice, got %d", len(containers))
+		}
+	})
+
+	t.Run("single_container", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "only_one", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Health: &container.Health{Status: "healthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 0 {
+			t.Errorf("expected 0 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "only_one" {
+			t.Errorf("expected only_one, got %s", containers[0].ID)
+		}
+	})
+
+	t.Run("healthy_with_different_restart_counts", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "no_restarts", Created: 100},
+			{ID: "many_restarts", Created: 200},
+			{ID: "few_restarts", Created: 150},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				restartCount := 0
+				switch id {
+				case "many_restarts":
+					restartCount = 10
+				case "few_restarts":
+					restartCount = 3
+				}
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						RestartCount: restartCount,
+						State: &container.State{
+							Health: &container.Health{Status: "healthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 0 {
+			t.Errorf("expected 0 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "many_restarts" {
+			t.Errorf("expected many_restarts first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "few_restarts" {
+			t.Errorf("expected few_restarts second, got %s", containers[1].ID)
+		}
+		if containers[2].ID != "no_restarts" {
+			t.Errorf("expected no_restarts third, got %s", containers[2].ID)
+		}
+	})
+
+	t.Run("unhealthy_with_different_restart_counts", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "unhealthy_few", Created: 100},
+			{ID: "unhealthy_many", Created: 200},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				restartCount := 1
+				if id == "unhealthy_many" {
+					restartCount = 5
+				}
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						RestartCount: restartCount,
+						State: &container.State{
+							Health: &container.Health{Status: "unhealthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 2 {
+			t.Errorf("expected 2 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy_many" {
+			t.Errorf("expected unhealthy_many first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "unhealthy_few" {
+			t.Errorf("expected unhealthy_few second, got %s", containers[1].ID)
+		}
+	})
+
+	t.Run("unhealthy_no_restarts_before_healthy_many_restarts", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "healthy_many_restarts", Created: 100},
+			{ID: "unhealthy_no_restarts", Created: 200},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "unhealthy_no_restarts":
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							RestartCount: 0,
+							State: &container.State{
+								Health: &container.Health{Status: "unhealthy"},
+							},
+						},
+					}, nil
+				default:
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							RestartCount: 10,
+							State: &container.State{
+								Health: &container.Health{Status: "healthy"},
+							},
+						},
+					}, nil
+				}
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 1 {
+			t.Errorf("expected 1 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "unhealthy_no_restarts" {
+			t.Errorf("expected unhealthy_no_restarts first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "healthy_many_restarts" {
+			t.Errorf("expected healthy_many_restarts second, got %s", containers[1].ID)
+		}
+	})
+
+	t.Run("same_restart_count_falls_back_to_oldest", func(t *testing.T) {
+		containers := []container.Summary{
+			{ID: "newer", Created: 200},
+			{ID: "older", Created: 100},
+		}
+
+		mock := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						RestartCount: 5,
+						State: &container.State{
+							Health: &container.Health{Status: "healthy"},
+						},
+					},
+				}, nil
+			},
+		}
+
+		count := sortContainersByHealthThenCreationTime(ctx, mock, containers)
+		if count != 0 {
+			t.Errorf("expected 0 unhealthy, got %d", count)
+		}
+		if containers[0].ID != "older" {
+			t.Errorf("expected older first, got %s", containers[0].ID)
+		}
+		if containers[1].ID != "newer" {
+			t.Errorf("expected newer second, got %s", containers[1].ID)
+		}
+	})
+}
