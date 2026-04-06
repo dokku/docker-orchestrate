@@ -70,7 +70,7 @@ func waitForDockerHealthCheck(ctx context.Context, input WaitForHealthcheckInput
 
 	maxWaitTime := input.Monitor * 2
 	if input.HealthcheckWait > 0 {
-		maxWaitTime = input.HealthcheckWait * 2
+		maxWaitTime = (input.Monitor + input.HealthcheckWait) * 2
 	}
 	deadline := time.Now().Add(maxWaitTime)
 

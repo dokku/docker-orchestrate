@@ -320,7 +320,7 @@ services:
 - This only applies to containers **without** a Docker healthcheck. Containers with a healthcheck use the standard health status polling.
 - If not specified, containers without a healthcheck are considered healthy immediately when running (existing behavior).
 - The container must be continuously running for the full duration. If the container restarts during the wait, the timer resets.
-- When `x-healthcheck-wait` is set, it replaces `monitor` as the timeout basis: the health check times out after `x-healthcheck-wait * 2`. The `monitor` field still controls the polling interval.
+- When `x-healthcheck-wait` is set, the health check timeout becomes `(monitor + x-healthcheck-wait) * 2`, giving enough room for polling plus the wait. The `monitor` field still controls the polling interval.
 - The wait is applied after the container reaches the running state but before the `x-healthcheck-host-command` (if any) is executed.
 
 ### Stop Commands

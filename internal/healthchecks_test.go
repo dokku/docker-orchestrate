@@ -240,7 +240,7 @@ func TestWaitForDockerHealthCheck(t *testing.T) {
 			},
 		}
 
-		healthcheckWait := 80 * time.Millisecond
+		healthcheckWait := 50 * time.Millisecond
 		tickerCh := make(chan time.Time, 30)
 
 		input := WaitForHealthcheckInput{
@@ -257,9 +257,9 @@ func TestWaitForDockerHealthCheck(t *testing.T) {
 			done <- waitForDockerHealthCheck(ctx, input)
 		}()
 
-		// Send ticks periodically
+		// Send ticks every 10ms
 		go func() {
-			for i := 0; i < 40; i++ {
+			for i := 0; i < 30; i++ {
 				time.Sleep(10 * time.Millisecond)
 				tickerCh <- time.Now()
 			}
