@@ -347,7 +347,7 @@ services:
 
 During deploy, `docker-orchestrate` inspects the service image for `VOLUME` directives defined in the Dockerfile. If any of those volume paths are not mapped to a named volume or bind mount in the compose file, a warning is logged:
 
-```
+```text
 Warning: service 'web' has anonymous volume at /var/lib/data — data will be lost during rolling updates. Use a named volume.
 ```
 
