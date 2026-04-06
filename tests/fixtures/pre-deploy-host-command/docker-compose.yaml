@@ -1,0 +1,12 @@
+---
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      x-pre-deploy-host-command: |
+        touch /tmp/bats-pre-deploy-started
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s

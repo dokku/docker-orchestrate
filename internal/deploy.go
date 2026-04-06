@@ -51,6 +51,48 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		return err
 	}
 
+	executor := input.Executor
+	if executor == nil {
+		executor = ExecCommand
+	}
+
+	// Parse project-level deploy hook extensions
+	projectPreDeployHostCommand := ""
+	projectPostDeployHostCommand := ""
+	projectPreDeployHostCommandDetached := false
+	projectPostDeployHostCommandDetached := false
+	if input.Project != nil && input.Project.Extensions != nil {
+		if cmd, ok := input.Project.Extensions["x-pre-deploy-host-command"].(string); ok {
+			projectPreDeployHostCommand = cmd
+		}
+		if cmd, ok := input.Project.Extensions["x-post-deploy-host-command"].(string); ok {
+			projectPostDeployHostCommand = cmd
+		}
+		if detached, err := parseDetachedFlag(input.Project.Extensions, "x-pre-deploy-host-command-detached"); err != nil {
+			return err
+		} else {
+			projectPreDeployHostCommandDetached = detached
+		}
+		if detached, err := parseDetachedFlag(input.Project.Extensions, "x-post-deploy-host-command-detached"); err != nil {
+			return err
+		} else {
+			projectPostDeployHostCommandDetached = detached
+		}
+	}
+
+	// Run project-level pre-deploy host command
+	if err := runHostScript(ctx, runScriptInput{
+		Client:      input.Client,
+		Detached:    projectPreDeployHostCommandDetached,
+		Env:         input.EnvVars,
+		Executor:    executor,
+		ProjectName: input.ProjectName,
+		Script:      projectPreDeployHostCommand,
+		ScriptType:  "project-pre-deploy",
+	}); err != nil {
+		return fmt.Errorf("project pre-deploy host command failed: %v", err)
+	}
+
 	for _, serviceName := range orderedServices {
 		input.Logger.LogHeader2(fmt.Sprintf("Deploying service %s", serviceName))
 		err = DeployService(ctx, DeployServiceInput{
@@ -73,7 +115,24 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		}
 	}
 
-	return RemoveMissingServices(ctx, input, orderedServices)
+	if err := RemoveMissingServices(ctx, input, orderedServices); err != nil {
+		return err
+	}
+
+	// Run project-level post-deploy host command (only on success)
+	if err := runHostScript(ctx, runScriptInput{
+		Client:      input.Client,
+		Detached:    projectPostDeployHostCommandDetached,
+		Env:         input.EnvVars,
+		Executor:    executor,
+		ProjectName: input.ProjectName,
+		Script:      projectPostDeployHostCommand,
+		ScriptType:  "project-post-deploy",
+	}); err != nil {
+		return fmt.Errorf("project post-deploy host command failed: %v", err)
+	}
+
+	return nil
 }
 
 func RemoveMissingServices(ctx context.Context, input DeployProjectInput, orderedServices []string) error {
@@ -210,9 +269,52 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		return nil
 	}
 
+	// Parse per-service deploy hook extensions from deploy config
+	servicePreDeployHostCommand := ""
+	servicePostDeployHostCommand := ""
+	servicePreDeployHostCommandDetached := false
+	servicePostDeployHostCommandDetached := false
+	if service.Deploy != nil && service.Deploy.Extensions != nil {
+		if cmd, ok := service.Deploy.Extensions["x-pre-deploy-host-command"].(string); ok {
+			servicePreDeployHostCommand = cmd
+		}
+		if cmd, ok := service.Deploy.Extensions["x-post-deploy-host-command"].(string); ok {
+			servicePostDeployHostCommand = cmd
+		}
+		if detached, err := parseDetachedFlag(service.Deploy.Extensions, "x-pre-deploy-host-command-detached"); err != nil {
+			return err
+		} else {
+			servicePreDeployHostCommandDetached = detached
+		}
+		if detached, err := parseDetachedFlag(service.Deploy.Extensions, "x-post-deploy-host-command-detached"); err != nil {
+			return err
+		} else {
+			servicePostDeployHostCommandDetached = detached
+		}
+	}
+
+	deployExecutor := input.Executor
+	if deployExecutor == nil {
+		deployExecutor = ExecCommand
+	}
+
+	// Run per-service pre-deploy host command
+	if err := runHostScript(ctx, runScriptInput{
+		Client:      input.Client,
+		Detached:    servicePreDeployHostCommandDetached,
+		Env:         input.EnvVars,
+		Executor:    deployExecutor,
+		ProjectName: input.ProjectName,
+		ServiceName: input.ServiceName,
+		Script:      servicePreDeployHostCommand,
+		ScriptType:  "pre-deploy",
+	}); err != nil {
+		return fmt.Errorf("pre-deploy host command failed for service %s: %v", input.ServiceName, err)
+	}
+
 	// Detect one-shot service and branch to dedicated handler
 	if isOneShotService(service) {
-		return deployOneShotService(ctx, DeployOneShotServiceInput{
+		err := deployOneShotService(ctx, DeployOneShotServiceInput{
 			Build:        input.Build,
 			ComposeFiles: input.ComposeFiles,
 			EnvFiles:     input.EnvFiles,
@@ -223,6 +325,25 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 			Service:      service,
 			ServiceName:  input.ServiceName,
 		})
+		if err != nil {
+			return err
+		}
+
+		// Run per-service post-deploy host command for one-shot (only on success)
+		if err := runHostScript(ctx, runScriptInput{
+			Client:      input.Client,
+			Detached:    servicePostDeployHostCommandDetached,
+			Env:         input.EnvVars,
+			Executor:    deployExecutor,
+			ProjectName: input.ProjectName,
+			ServiceName: input.ServiceName,
+			Script:      servicePostDeployHostCommand,
+			ScriptType:  "post-deploy",
+		}); err != nil {
+			return fmt.Errorf("post-deploy host command failed for service %s: %v", input.ServiceName, err)
+		}
+
+		return nil
 	}
 
 	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, service)
@@ -592,6 +713,21 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	input.Logger.Info(fmt.Sprintf("Deployment complete: service=%s, expected=%d, actual=%d failures=%d", input.ServiceName, replicas, len(finalContainers), rollingUpdateOutput.Failures))
+
+	// Run per-service post-deploy host command (only on success)
+	if err := runHostScript(ctx, runScriptInput{
+		Client:      input.Client,
+		Detached:    servicePostDeployHostCommandDetached,
+		Env:         input.EnvVars,
+		Executor:    deployExecutor,
+		ProjectName: input.ProjectName,
+		ServiceName: input.ServiceName,
+		Script:      servicePostDeployHostCommand,
+		ScriptType:  "post-deploy",
+	}); err != nil {
+		return fmt.Errorf("post-deploy host command failed for service %s: %v", input.ServiceName, err)
+	}
+
 	return nil
 }
 

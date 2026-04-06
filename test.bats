@@ -94,10 +94,17 @@ setup() {
   rm -f /tmp/bats-shell-directive-*
   rm -f /tmp/bats-pre-stop-hooks-*
   rm -f /tmp/bats-post-start-hooks-*
+  rm -f /tmp/bats-pre-deploy-*
+  rm -f /tmp/bats-post-deploy-*
+  rm -f /tmp/bats-deploy-*
+  rm -f /tmp/bats-project-deploy-*
+  rm -f /tmp/bats-project-pre-deploy-*
+  rm -f /tmp/bats-project-post-deploy-*
+  rm -f /tmp/bats-one-shot-deploy-*
 }
 
 teardown() {
-  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure bats-one-shot-pre-deploy bats-one-shot-post-deploy bats-one-shot-failure-aborts bats-one-shot-priority; do
+  for project in bats-pre-stop bats-post-stop bats-both bats-sync bats-shebang-sh bats-shebang-bash bats-shebang-dash bats-shebang-python3 bats-shebang-default bats-exited-cleanup bats-pre-stop-hooks bats-post-start-hooks bats-multi-file bats-env-file bats-pull-policy bats-pull-policy-ifnp bats-pull-policy-build bats-healthcheck-wait bats-wait-after-healthy bats-one-shot-success bats-one-shot-failure bats-one-shot-pre-deploy bats-one-shot-post-deploy bats-one-shot-failure-aborts bats-one-shot-priority bats-pre-deploy-cmd bats-post-deploy-cmd bats-deploy-both bats-project-pre-deploy bats-project-post-deploy bats-project-deploy-both bats-detached-pre-deploy bats-detached-post-deploy bats-deploy-failure bats-deploy-template bats-pre-deploy-fails bats-deploy-non-detached bats-project-deploy-failure bats-project-pre-deploy-fails bats-deploy-combined bats-one-shot-deploy-cmd; do
     docker compose -p "$project" down --remove-orphans --timeout 5 2>/dev/null || true
   done
 
@@ -111,6 +118,13 @@ teardown() {
   rm -f /tmp/bats-shell-directive-*
   rm -f /tmp/bats-pre-stop-hooks-*
   rm -f /tmp/bats-post-start-hooks-*
+  rm -f /tmp/bats-pre-deploy-*
+  rm -f /tmp/bats-post-deploy-*
+  rm -f /tmp/bats-deploy-*
+  rm -f /tmp/bats-project-deploy-*
+  rm -f /tmp/bats-project-pre-deploy-*
+  rm -f /tmp/bats-project-post-deploy-*
+  rm -f /tmp/bats-one-shot-deploy-*
 }
 
 @test "default" {
@@ -794,4 +808,294 @@ teardown() {
   run docker ps --filter "label=com.docker.compose.project=bats-one-shot-success" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "" "$output"
+}
+
+# =====================================================
+# Per-service deploy host command tests
+# =====================================================
+
+@test "per-service pre-deploy host command runs before deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pre-deploy-host-command"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-deploy-cmd web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # pre-deploy marker should exist
+  [ -f /tmp/bats-pre-deploy-started ]
+}
+
+@test "per-service post-deploy host command runs after successful deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/post-deploy-host-command"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-post-deploy-cmd web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # post-deploy marker should exist
+  [ -f /tmp/bats-post-deploy-completed ]
+}
+
+@test "both per-service pre and post deploy host commands run in correct order" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/deploy-host-command-both"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-deploy-both web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # both markers should exist
+  [ -f /tmp/bats-deploy-both-pre-time ]
+  [ -f /tmp/bats-deploy-both-post-time ]
+
+  pre_time=$(cat /tmp/bats-deploy-both-pre-time)
+  post_time=$(cat /tmp/bats-deploy-both-post-time)
+  if [[ "$pre_time" -gt "$post_time" ]]; then
+    flunk "expected pre-deploy (${pre_time}) to run before post-deploy (${post_time})"
+  fi
+}
+
+# =====================================================
+# Project-level deploy host command tests
+# =====================================================
+
+@test "project-level pre-deploy host command runs before deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/project-pre-deploy-host-command"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-project-pre-deploy
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # project pre-deploy marker should exist
+  [ -f /tmp/bats-project-pre-deploy-started ]
+}
+
+@test "project-level post-deploy host command runs after successful deploy" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/project-post-deploy-host-command"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-project-post-deploy
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # project post-deploy marker should exist
+  [ -f /tmp/bats-project-post-deploy-completed ]
+}
+
+@test "both project-level pre and post deploy host commands run in correct order" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/project-deploy-host-command-both"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-project-deploy-both
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # both markers should exist
+  [ -f /tmp/bats-project-deploy-both-pre-time ]
+  [ -f /tmp/bats-project-deploy-both-post-time ]
+
+  pre_time=$(cat /tmp/bats-project-deploy-both-pre-time)
+  post_time=$(cat /tmp/bats-project-deploy-both-post-time)
+  if [[ "$pre_time" -gt "$post_time" ]]; then
+    flunk "expected project pre-deploy (${pre_time}) to run before project post-deploy (${post_time})"
+  fi
+}
+
+# =====================================================
+# Failure behavior tests
+# =====================================================
+
+@test "per-service post-deploy host command does NOT run on deploy failure" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/deploy-host-command-failure"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-deploy-failure web
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+
+  # post-deploy marker should NOT exist (deploy failed)
+  [ ! -f /tmp/bats-deploy-failure-post-deploy ]
+}
+
+@test "per-service pre-deploy host command failure aborts deployment" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/pre-deploy-host-command-fails"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-deploy-fails web
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+
+  # No containers should be running (deploy was aborted)
+  run docker ps --filter "label=com.docker.compose.project=bats-pre-deploy-fails" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "" "$output"
+}
+
+@test "project-level post-deploy host command does NOT run on service failure" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/project-deploy-host-command-failure"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-project-deploy-failure
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+
+  # project post-deploy marker should NOT exist (service deploy failed)
+  [ ! -f /tmp/bats-project-deploy-failure-post-deploy ]
+}
+
+@test "project-level pre-deploy host command failure aborts all deployments" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/project-pre-deploy-host-command-fails"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-project-pre-deploy-fails
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+
+  # No containers should be running (all deployments aborted)
+  run docker ps --filter "label=com.docker.compose.project=bats-project-pre-deploy-fails" --filter "status=running" -q
+  echo "running containers: $output"
+  assert_equal "" "$output"
+}
+
+# =====================================================
+# Detached execution tests
+# =====================================================
+
+@test "pre-deploy host command detached continues running after exit" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/detached-pre-deploy"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-detached-pre-deploy web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # started marker should exist (command was launched)
+  [ -f /tmp/bats-detached-pre-deploy-started ]
+
+  # completed marker should NOT exist yet (sleep 30 in script, deploy finishes faster)
+  [ ! -f /tmp/bats-detached-pre-deploy-completed ]
+}
+
+@test "post-deploy host command detached does not block deployment" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/detached-post-deploy"
+
+  # Measure deploy time - detached mode should not wait for the sleep 30 in script
+  start_time=$(date +%s)
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-detached-post-deploy web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  end_time=$(date +%s)
+
+  elapsed=$((end_time - start_time))
+  echo "elapsed: ${elapsed}s"
+
+  # Deploy should complete in well under 30 seconds (the detached script has sleep 30)
+  # Normal deploy takes ~6-10s for scale-up + healthcheck
+  # If detached mode is NOT working (synchronous), it would take 30+ seconds
+  if [[ "$elapsed" -ge 25 ]]; then
+    flunk "expected deploy to complete in under 25 seconds (detached script has sleep 30), took ${elapsed}s"
+  fi
+}
+
+# =====================================================
+# Non-detached (synchronous) execution tests
+# =====================================================
+
+@test "non-detached deploy commands complete before exit" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/deploy-host-command-non-detached"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-deploy-non-detached web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # both pre-deploy started and completed markers should exist (synchronous)
+  [ -f /tmp/bats-deploy-non-detached-pre-started ]
+  [ -f /tmp/bats-deploy-non-detached-pre-completed ]
+
+  # both post-deploy started and completed markers should exist (synchronous)
+  [ -f /tmp/bats-deploy-non-detached-post-started ]
+  [ -f /tmp/bats-deploy-non-detached-post-completed ]
+}
+
+# =====================================================
+# Template variable tests
+# =====================================================
+
+@test "per-service deploy host command template variables expand correctly" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/deploy-host-command-template"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-deploy-template web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # verify service name was expanded
+  [ -f /tmp/bats-deploy-template-service ]
+  service_name=$(cat /tmp/bats-deploy-template-service | tr -d '[:space:]')
+  assert_equal "web" "$service_name"
+
+  # verify project name was expanded
+  [ -f /tmp/bats-deploy-template-project ]
+  project_name=$(cat /tmp/bats-deploy-template-project | tr -d '[:space:]')
+  assert_equal "bats-deploy-template" "$project_name"
+}
+
+# =====================================================
+# Combined project + per-service tests
+# =====================================================
+
+@test "project and per-service deploy hooks run in correct order" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/deploy-host-command-combined"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-deploy-combined
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # all four markers should exist
+  [ -f /tmp/bats-deploy-combined-project-pre-time ]
+  [ -f /tmp/bats-deploy-combined-service-pre-time ]
+  [ -f /tmp/bats-deploy-combined-service-post-time ]
+  [ -f /tmp/bats-deploy-combined-project-post-time ]
+
+  project_pre=$(cat /tmp/bats-deploy-combined-project-pre-time)
+  service_pre=$(cat /tmp/bats-deploy-combined-service-pre-time)
+  service_post=$(cat /tmp/bats-deploy-combined-service-post-time)
+  project_post=$(cat /tmp/bats-deploy-combined-project-post-time)
+
+  # verify order: project-pre -> service-pre -> service-post -> project-post
+  if [[ "$project_pre" -gt "$service_pre" ]]; then
+    flunk "expected project-pre (${project_pre}) before service-pre (${service_pre})"
+  fi
+  if [[ "$service_pre" -gt "$service_post" ]]; then
+    flunk "expected service-pre (${service_pre}) before service-post (${service_post})"
+  fi
+  if [[ "$service_post" -gt "$project_post" ]]; then
+    flunk "expected service-post (${service_post}) before project-post (${project_post})"
+  fi
+}
+
+# =====================================================
+# One-shot service deploy hook tests
+# =====================================================
+
+@test "one-shot service runs per-service deploy hooks" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/one-shot-deploy-host-command"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-one-shot-deploy-cmd migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Both pre and post deploy markers should exist
+  [ -f /tmp/bats-one-shot-deploy-pre ]
+  [ -f /tmp/bats-one-shot-deploy-post ]
+
+  # One-shot should have completed
+  assert_output_contains "One-shot service migrate completed successfully"
 }

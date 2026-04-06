@@ -1,0 +1,13 @@
+---
+services:
+  web:
+    image: nonexistent-image:definitely-not-here
+    pull_policy: never
+    deploy:
+      replicas: 1
+      x-post-deploy-host-command: |
+        touch /tmp/bats-deploy-failure-post-deploy
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s

@@ -1,0 +1,13 @@
+---
+x-post-deploy-host-command: |
+  touch /tmp/bats-project-post-deploy-completed
+
+services:
+  web:
+    image: nginx:latest
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
