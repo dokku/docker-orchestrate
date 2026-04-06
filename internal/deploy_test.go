@@ -14,6 +14,7 @@ import (
 	"github.com/docker/compose/v5/pkg/compose"
 	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/josegonzalez/cli-skeleton/command"
 	"github.com/rs/zerolog"
 )
@@ -4044,9 +4045,11 @@ func TestServiceConfigUnchanged(t *testing.T) {
 	tests := []struct {
 		name           string
 		force          bool
-		build          bool
+		buildImage     bool
+		pullPolicy     string
 		containers     []container.Summary
 		replicas       int
+		imageID        string
 		expectedResult bool
 	}{
 		{
@@ -4098,8 +4101,8 @@ func TestServiceConfigUnchanged(t *testing.T) {
 			expectedResult: false,
 		},
 		{
-			name:  "build_always_deploys",
-			build: true,
+			name:       "build_image_always_deploys",
+			buildImage: true,
 			containers: []container.Summary{
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
@@ -4124,6 +4127,26 @@ func TestServiceConfigUnchanged(t *testing.T) {
 			replicas:       3,
 			expectedResult: true,
 		},
+		{
+			name:       "pull_always_same_image_skips",
+			pullPolicy: "always",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", ImageID: "sha256:abc123", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			imageID:        "sha256:abc123",
+			replicas:       1,
+			expectedResult: true,
+		},
+		{
+			name:       "pull_always_different_image_deploys",
+			pullPolicy: "always",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", ImageID: "sha256:old_image", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			imageID:        "sha256:new_image",
+			replicas:       1,
+			expectedResult: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -4141,17 +4164,30 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 					return tt.containers, nil
 				},
+				imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+					if tt.imageID != "" {
+						return image.InspectResponse{ID: tt.imageID}, nil
+					}
+					return image.InspectResponse{}, fmt.Errorf("no image")
+				},
+			}
+
+			mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+				return ExecCommandResponse{ExitCode: 0}, nil
 			}
 
 			result, err := serviceConfigUnchanged(context.Background(), ServiceConfigUnchangedInput{
-				Build:       tt.build,
-				Client:      mockClient,
-				Force:       tt.force,
-				Logger:      logger,
-				ProjectName: "test",
-				Replicas:    tt.replicas,
-				Service:     &service,
-				ServiceName: "web",
+				BuildImage:   tt.buildImage,
+				Client:       mockClient,
+				ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+				Executor:     mockExecutor,
+				Force:        tt.force,
+				Logger:       logger,
+				ProjectName:  "test",
+				PullPolicy:   tt.pullPolicy,
+				Replicas:     tt.replicas,
+				Service:      &service,
+				ServiceName:  "web",
 			})
 
 			if err != nil {
@@ -4315,6 +4351,84 @@ func TestDeployServiceForceOverridesHash(t *testing.T) {
 	output := buf.String()
 	if strings.Contains(output, "Skipping unchanged service") {
 		t.Errorf("expected 'Skipping unchanged service' NOT in output when force=true, got: %s", output)
+	}
+}
+
+func TestDeployServiceBuildWithoutBuildSection(t *testing.T) {
+	// Service with no build section - --build flag should not bypass hash check
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+		// No Build section
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	executorCalled := false
+	callCount := 0
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			callCount++
+			if callCount <= 2 {
+				return []container.Summary{
+					{
+						ID:      "aaa_container_id",
+						State:   "running",
+						Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+						Created: 100,
+					},
+				}, nil
+			}
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		executorCalled = true
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": service,
+		},
+	}
+
+	err = DeployService(context.Background(), DeployServiceInput{
+		Build:                 true, // --build flag set, but no build section on service
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		ServiceName:           "web",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Skipping unchanged service") {
+		t.Errorf("expected 'Skipping unchanged service' when --build is set but service has no build section, got: %s", output)
+	}
+
+	if executorCalled {
+		t.Errorf("expected executor to not be called when service has no build section and config is unchanged")
 	}
 }
 

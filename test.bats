@@ -311,7 +311,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-shell-directive --force web
   echo "output: $output"
   echo "status: $status"
   assert_success
@@ -405,7 +405,7 @@ teardown() {
   echo "status: $status"
   assert_success
 
-  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop-hooks web
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-pre-stop-hooks --force web
   echo "output: $output"
   echo "status: $status"
   assert_success

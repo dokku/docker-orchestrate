@@ -304,18 +304,27 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
-	// Check if service config is unchanged and can be skipped
+	// Resolve pull policy and build flag early for config hash check
 	replicas := ServiceReplicas(input, service)
+	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, service)
+	if err != nil {
+		return err
+	}
 
+	// Check if service config is unchanged and can be skipped
 	unchanged, err := serviceConfigUnchanged(ctx, ServiceConfigUnchangedInput{
-		Build:       input.Build,
-		Client:      input.Client,
-		Force:       input.Force,
-		Logger:      input.Logger,
-		ProjectName: input.ProjectName,
-		Replicas:    replicas,
-		Service:     service,
-		ServiceName: input.ServiceName,
+		BuildImage:   buildImage,
+		Client:       input.Client,
+		ComposeFiles: input.ComposeFiles,
+		EnvFiles:     input.EnvFiles,
+		Executor:     input.Executor,
+		Force:        input.Force,
+		Logger:       input.Logger,
+		ProjectName:  input.ProjectName,
+		PullPolicy:   pullPolicy,
+		Replicas:     replicas,
+		Service:      service,
+		ServiceName:  input.ServiceName,
 	})
 	if err != nil {
 		return err
@@ -399,11 +408,6 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 
 		return nil
-	}
-
-	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, service)
-	if err != nil {
-		return err
 	}
 
 	// Compute stop timeout from stop_grace_period, defaulting to 10 seconds
@@ -845,16 +849,24 @@ type ShouldSkipScaleDownServiceInput struct {
 
 // ServiceConfigUnchangedInput is the input for the serviceConfigUnchanged function
 type ServiceConfigUnchangedInput struct {
-	// Build is whether images are being built before deploying
-	Build bool
+	// BuildImage is whether images will actually be built for this service
+	BuildImage bool
 	// Client is the Docker client to use
 	Client DockerClientInterface
+	// ComposeFiles is the list of compose files (for pull command)
+	ComposeFiles []string
+	// EnvFiles is the list of env files (for pull command)
+	EnvFiles []string
+	// Executor is the command executor to use (for pulling images)
+	Executor CommandExecutor
 	// Force forces deploy even if service config is unchanged
 	Force bool
 	// Logger is the logger to use
 	Logger *command.ZerologUi
 	// ProjectName is the name of the project
 	ProjectName string
+	// PullPolicy is the resolved pull policy for this service
+	PullPolicy string
 	// Replicas is the desired number of replicas
 	Replicas int
 	// Service is the service configuration
@@ -871,7 +883,7 @@ func serviceConfigUnchanged(ctx context.Context, input ServiceConfigUnchangedInp
 		return false, nil
 	}
 
-	if input.Build {
+	if input.BuildImage {
 		return false, nil
 	}
 
@@ -907,6 +919,44 @@ func serviceConfigUnchanged(ctx context.Context, input ServiceConfigUnchangedInp
 		containerHash := c.Labels[api.ConfigHashLabel]
 		if containerHash != expectedHash {
 			return false, nil
+		}
+	}
+
+	// If pull policy is "always", pull the image and compare digests
+	// to detect upstream image changes not reflected in the config hash
+	if input.PullPolicy == "always" {
+		executor := input.Executor
+		if executor == nil {
+			executor = ExecCommand
+		}
+		projectDir := filepath.Dir(input.ComposeFiles[0])
+
+		input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
+		pullArgs := []string{"compose"}
+		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
+		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
+		_, err := executor(ctx, ExecCommandInput{
+			Command:          "docker",
+			Args:             pullArgs,
+			WorkingDirectory: projectDir,
+		})
+		if err != nil {
+			return false, fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
+		}
+
+		// Compare the pulled image ID with running containers' image IDs
+		imageInspect, err := input.Client.ImageInspect(ctx, input.Service.Image)
+		if err != nil {
+			// Can't inspect image, proceed with deploy to be safe
+			return false, nil
+		}
+
+		for _, c := range currentContainers {
+			if c.ImageID != imageInspect.ID {
+				input.Logger.Info(fmt.Sprintf("Image changed for service %s, proceeding with deploy", input.ServiceName))
+				return false, nil
+			}
 		}
 	}
 
