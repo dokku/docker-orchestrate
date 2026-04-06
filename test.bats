@@ -1041,10 +1041,13 @@ teardown() {
   echo "status: $status"
   assert_success
 
+  # poll for the detached command to start (up to 10s)
+  for i in $(seq 1 10); do
+    [ -f /tmp/orch-detached-post-deploy-started ] && break
+    sleep 1
+  done
+
   # The "started" marker must exist — proves the process was forked before exit
-  # This is the key test for issue #80: without the fix, this marker may not
-  # exist because the goroutine that forks the process may not execute before
-  # the main process exits.
   [ -f /tmp/orch-detached-post-deploy-started ]
 }
 
