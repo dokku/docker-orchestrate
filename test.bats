@@ -1323,3 +1323,55 @@ teardown() {
   echo "volume inspect status: $status"
   [ "$status" -ne 0 ]
 }
+
+@test "models: deploy fails when docker-model plugin is not installed" {
+  # Ensure no mock plugin is present
+  rm -f "$HOME/.docker/cli-plugins/docker-model"
+
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/models-plugin-missing"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-models-missing web
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+  assert_output_contains "docker-model plugin is not available"
+}
+
+@test "models: deploy succeeds without models in compose file" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/models-no-models"
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-no-models web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+}
+
+@test "models: deploy with mock plugin pulls and configures models" {
+  # Build mock docker-model plugin for the current platform
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/models-plugin-installed"
+  run go build -o docker-model .
+  if [ "$status" -ne 0 ]; then
+    skip "could not build mock docker-model plugin"
+  fi
+
+  # Install mock plugin
+  mkdir -p "$HOME/.docker/cli-plugins"
+  cp docker-model "$HOME/.docker/cli-plugins/docker-model"
+
+  # Verify the mock plugin is recognized by Docker
+  if ! docker model version >/dev/null 2>&1; then
+    rm -f "$HOME/.docker/cli-plugins/docker-model"
+    skip "docker does not recognize the mock model plugin (Docker Desktop may not support mock plugins)"
+  fi
+
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-models-mock web
+  echo "output: $output"
+  echo "status: $status"
+
+  # Clean up mock plugin
+  rm -f "$HOME/.docker/cli-plugins/docker-model"
+
+  assert_success
+  assert_output_contains "Pulling model"
+  assert_output_contains "Configuring model"
+}

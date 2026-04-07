@@ -535,6 +535,15 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		executor = ExecCommand
 	}
 
+	// Ensure models are pulled and configured before deploying the service
+	if err := ensureModels(ctx, ensureModelsInput{
+		Executor: executor,
+		Logger:   input.Logger,
+		Project:  input.Project,
+	}); err != nil {
+		return err
+	}
+
 	// Rename running containers to temporary names to avoid conflicts with docker compose
 	// naming during rolling updates and scale operations. The final renameContainersToConvention
 	// at the end of deploy assigns the proper names.

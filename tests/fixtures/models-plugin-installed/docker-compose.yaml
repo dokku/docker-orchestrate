@@ -1,0 +1,19 @@
+---
+models:
+  llm:
+    model: ai/smollm2
+    context_size: 2048
+
+services:
+  web:
+    image: nginx:latest
+    models:
+      llm:
+        endpoint_var: LLM_URL
+        model_var: LLM_MODEL
+    deploy:
+      replicas: 1
+      update_config:
+        order: start-first
+        delay: 0s
+        monitor: 5s
