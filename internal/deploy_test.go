@@ -3783,7 +3783,7 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 	})
 }
 
-func TestDeployProjectModelPluginCheck(t *testing.T) {
+func TestEnsureModels(t *testing.T) {
 	var buf bytes.Buffer
 	logger := &command.ZerologUi{
 		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
@@ -3793,58 +3793,35 @@ func TestDeployProjectModelPluginCheck(t *testing.T) {
 		OutputIndentField: false,
 	}
 
-	t.Run("models present and plugin available succeeds", func(t *testing.T) {
-		mockClient := &mockDockerClient{
-			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
-				return []container.Summary{}, nil
-			},
-		}
-
+	t.Run("no_models_is_noop", func(t *testing.T) {
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			return ExecCommandResponse{ExitCode: 0}, nil
+			t.Fatal("executor should not be called when there are no models")
+			return ExecCommandResponse{}, nil
 		}
 
-		project := &types.Project{
-			Models: types.Models{
-				"llm": types.ModelConfig{
-					Model: "ai/smollm2",
-				},
-			},
-			Services: types.Services{
-				"web": types.ServiceConfig{
-					Name:  "web",
-					Image: "myapp:latest",
-					Models: map[string]*types.ServiceModelConfig{
-						"llm": {},
-					},
-				},
-			},
-		}
-
-		err := DeployProject(context.Background(), DeployProjectInput{
-			Client:       mockClient,
-			Executor:     mockExecutor,
-			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
-			Logger:       logger,
-			Project:      project,
-			ProjectName:  "test",
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  &types.Project{},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+
+		// Also test nil project
+		err = ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  nil,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error for nil project: %v", err)
+		}
 	})
 
-	t.Run("models present and plugin missing fails", func(t *testing.T) {
-		serviceCalled := false
-		mockClient := &mockDockerClient{
-			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
-				serviceCalled = true
-				return []container.Summary{}, nil
-			},
-		}
-
+	t.Run("plugin_missing_fails", func(t *testing.T) {
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if input.Command == "docker" && len(input.Args) > 0 && input.Args[0] == "model" {
+			if input.Command == "docker" && len(input.Args) > 0 && input.Args[0] == "model" && input.Args[1] == "version" {
 				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("docker: 'model' is not a docker command")
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
@@ -3856,24 +3833,12 @@ func TestDeployProjectModelPluginCheck(t *testing.T) {
 					Model: "ai/smollm2",
 				},
 			},
-			Services: types.Services{
-				"web": types.ServiceConfig{
-					Name:  "web",
-					Image: "myapp:latest",
-					Models: map[string]*types.ServiceModelConfig{
-						"llm": {},
-					},
-				},
-			},
 		}
 
-		err := DeployProject(context.Background(), DeployProjectInput{
-			Client:       mockClient,
-			Executor:     mockExecutor,
-			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
-			Logger:       logger,
-			Project:      project,
-			ProjectName:  "test",
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
 		})
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -3881,49 +3846,317 @@ func TestDeployProjectModelPluginCheck(t *testing.T) {
 		if !strings.Contains(err.Error(), "docker-model plugin is not available") {
 			t.Errorf("expected docker-model plugin error, got: %v", err)
 		}
-		if serviceCalled {
-			t.Error("no service operations should have run when docker-model plugin is missing")
-		}
 	})
 
-	t.Run("no models skips the check", func(t *testing.T) {
-		mockClient := &mockDockerClient{
-			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
-				return []container.Summary{}, nil
-			},
-		}
-
-		modelCheckCalled := false
+	t.Run("pulls_missing_model", func(t *testing.T) {
+		var commands []string
 		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
-			if input.Command == "docker" && len(input.Args) > 0 && input.Args[0] == "model" {
-				modelCheckCalled = true
-				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("should not be called")
+			cmd := input.Command + " " + strings.Join(input.Args, " ")
+			commands = append(commands, cmd)
+			if input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: "[]"}, nil
 			}
 			return ExecCommandResponse{ExitCode: 0}, nil
 		}
 
 		project := &types.Project{
-			Services: types.Services{
-				"web": types.ServiceConfig{
-					Name:  "web",
-					Image: "nginx:alpine",
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
 				},
 			},
 		}
 
-		err := DeployProject(context.Background(), DeployProjectInput{
-			Client:       mockClient,
-			Executor:     mockExecutor,
-			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
-			Logger:       logger,
-			Project:      project,
-			ProjectName:  "test",
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if modelCheckCalled {
-			t.Error("docker model version should not have been called when project has no models")
+
+		// Verify pull was called
+		pullCalled := false
+		configureCalled := false
+		for _, cmd := range commands {
+			if strings.Contains(cmd, "model pull ai/smollm2") {
+				pullCalled = true
+			}
+			if strings.Contains(cmd, "model configure") && strings.Contains(cmd, "ai/smollm2") {
+				configureCalled = true
+			}
+		}
+		if !pullCalled {
+			t.Error("expected docker model pull to be called for missing model")
+		}
+		if !configureCalled {
+			t.Error("expected docker model configure to be called")
+		}
+	})
+
+	t.Run("skips_pull_for_available_model", func(t *testing.T) {
+		var commands []string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			cmd := input.Command + " " + strings.Join(input.Args, " ")
+			commands = append(commands, cmd)
+			if input.Args[1] == "ls" {
+				return ExecCommandResponse{
+					ExitCode: 0,
+					Stdout:   `[{"Id": "ai/smollm2", "Tags": ["latest"]}]`,
+				}, nil
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, cmd := range commands {
+			if strings.Contains(cmd, "model pull") {
+				t.Error("docker model pull should not be called for an available model")
+			}
+		}
+
+		// Configure should still be called
+		configureCalled := false
+		for _, cmd := range commands {
+			if strings.Contains(cmd, "model configure") {
+				configureCalled = true
+			}
+		}
+		if !configureCalled {
+			t.Error("expected docker model configure to be called even for available model")
+		}
+	})
+
+	t.Run("matches_model_by_tag", func(t *testing.T) {
+		var commands []string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			cmd := input.Command + " " + strings.Join(input.Args, " ")
+			commands = append(commands, cmd)
+			if input.Args[1] == "ls" {
+				return ExecCommandResponse{
+					ExitCode: 0,
+					Stdout:   `[{"Id": "some-id", "Tags": ["ai/smollm2"]}]`,
+				}, nil
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, cmd := range commands {
+			if strings.Contains(cmd, "model pull") {
+				t.Error("docker model pull should not be called when model matched by tag")
+			}
+		}
+	})
+
+	t.Run("configures_with_context_size", func(t *testing.T) {
+		var configureArgs string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) > 1 && input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: `[{"Id": "ai/smollm2", "Tags": []}]`}, nil
+			}
+			if len(input.Args) > 1 && input.Args[1] == "configure" {
+				configureArgs = strings.Join(input.Args, " ")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model:       "ai/smollm2",
+					ContextSize: 2048,
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(configureArgs, "--context-size 2048") {
+			t.Errorf("expected configure args to include --context-size 2048, got: %s", configureArgs)
+		}
+	})
+
+	t.Run("configures_with_runtime_flags", func(t *testing.T) {
+		var configureArgs string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) > 1 && input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: `[{"Id": "ai/smollm2", "Tags": []}]`}, nil
+			}
+			if len(input.Args) > 1 && input.Args[1] == "configure" {
+				configureArgs = strings.Join(input.Args, " ")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model:        "ai/smollm2",
+					RuntimeFlags: []string{"--threads=4", "--gpu"},
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(configureArgs, "-- --threads=4 --gpu") {
+			t.Errorf("expected configure args to include runtime flags after --, got: %s", configureArgs)
+		}
+	})
+
+	t.Run("pull_failure_aborts", func(t *testing.T) {
+		configureCalled := false
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) > 1 && input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: "[]"}, nil
+			}
+			if len(input.Args) > 1 && input.Args[1] == "pull" {
+				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("network error")
+			}
+			if len(input.Args) > 1 && input.Args[1] == "configure" {
+				configureCalled = true
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err == nil {
+			t.Fatal("expected error from pull failure, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to pull model") {
+			t.Errorf("expected pull failure error, got: %v", err)
+		}
+		if configureCalled {
+			t.Error("configure should not be called after pull failure")
+		}
+	})
+
+	t.Run("name_field_takes_precedence", func(t *testing.T) {
+		var pullArgs string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) > 1 && input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: "[]"}, nil
+			}
+			if len(input.Args) > 1 && input.Args[1] == "pull" {
+				pullArgs = strings.Join(input.Args, " ")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Name:  "custom-name",
+					Model: "ai/smollm2",
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(pullArgs, "custom-name") {
+			t.Errorf("expected pull to use Name field 'custom-name', got: %s", pullArgs)
+		}
+	})
+
+	t.Run("model_field_used_when_no_name", func(t *testing.T) {
+		var pullArgs string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if len(input.Args) > 1 && input.Args[1] == "ls" {
+				return ExecCommandResponse{ExitCode: 0, Stdout: "[]"}, nil
+			}
+			if len(input.Args) > 1 && input.Args[1] == "pull" {
+				pullArgs = strings.Join(input.Args, " ")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+		}
+
+		err := ensureModels(context.Background(), ensureModelsInput{
+			Executor: mockExecutor,
+			Logger:   logger,
+			Project:  project,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(pullArgs, "ai/smollm2") {
+			t.Errorf("expected pull to use Model field 'ai/smollm2', got: %s", pullArgs)
 		}
 	})
 }

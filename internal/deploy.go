@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
 	parser "github.com/novln/docker-parser"
+	"golang.org/x/sync/errgroup"
 )
 
 // DeployProjectInput is the input for the DeployProject function
@@ -60,15 +62,13 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		executor = ExecCommand
 	}
 
-	// Pre-flight check: verify docker-model plugin is available if project uses models
-	if input.Project != nil && len(input.Project.Models) > 0 {
-		_, err := executor(ctx, ExecCommandInput{
-			Command: "docker",
-			Args:    []string{"model", "version"},
-		})
-		if err != nil {
-			return fmt.Errorf("project references models but the docker-model plugin is not available: %v", err)
-		}
+	// Ensure models are pulled and configured before deploying services
+	if err := ensureModels(ctx, ensureModelsInput{
+		Executor: executor,
+		Logger:   input.Logger,
+		Project:  input.Project,
+	}); err != nil {
+		return err
 	}
 
 	// Parse project-level deploy hook extensions
@@ -1026,6 +1026,116 @@ func shouldSkipScaleDownService(input ShouldSkipScaleDownServiceInput) bool {
 		return true
 	}
 	return false
+}
+
+// availableModel represents a model returned by docker model ls --json
+type availableModel struct {
+	ID   string   `json:"Id"`
+	Tags []string `json:"Tags"`
+}
+
+// ensureModelsInput is the input for the ensureModels function
+type ensureModelsInput struct {
+	// Executor is the command executor to use
+	Executor CommandExecutor
+	// Logger is the logger to use
+	Logger *command.ZerologUi
+	// Project is the project configuration
+	Project *types.Project
+}
+
+// ensureModels verifies the docker-model plugin is available, pulls missing
+// models, and configures all models before service deployment begins
+func ensureModels(ctx context.Context, input ensureModelsInput) error {
+	if input.Project == nil || len(input.Project.Models) == 0 {
+		return nil
+	}
+
+	// Verify docker-model plugin is available
+	_, err := input.Executor(ctx, ExecCommandInput{
+		Command: "docker",
+		Args:    []string{"model", "version"},
+	})
+	if err != nil {
+		return fmt.Errorf("project references models but the docker-model plugin is not available: %v", err)
+	}
+
+	// List available models
+	resp, err := input.Executor(ctx, ExecCommandInput{
+		Command: "docker",
+		Args:    []string{"model", "ls", "--json"},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list models: %v", err)
+	}
+
+	var available []availableModel
+	stdout := resp.StdoutContents()
+	if stdout != "" {
+		if err := json.Unmarshal([]byte(stdout), &available); err != nil {
+			return fmt.Errorf("failed to parse model list: %v", err)
+		}
+	}
+
+	// Pull missing models and configure all models in parallel
+	g, ctx := errgroup.WithContext(ctx)
+	for name, model := range input.Project.Models {
+		// Resolve model name: Name field first, then Model field, then map key
+		modelName := model.Name
+		if modelName == "" {
+			modelName = model.Model
+		}
+		if modelName == "" {
+			modelName = name
+		}
+
+		g.Go(func() error {
+			// Check if model is already available
+			found := false
+			for _, a := range available {
+				if a.ID == modelName || slices.Contains(a.Tags, modelName) {
+					found = true
+					break
+				}
+			}
+
+			// Pull if missing
+			if !found {
+				input.Logger.Info(fmt.Sprintf("Pulling model: model=%s", modelName))
+				_, err := input.Executor(ctx, ExecCommandInput{
+					Command: "docker",
+					Args:    []string{"model", "pull", modelName},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to pull model %s: %v", modelName, err)
+				}
+			}
+
+			// Configure model (always runs to apply config changes)
+			args := []string{"model", "configure"}
+			if model.ContextSize > 0 {
+				args = append(args, "--context-size", fmt.Sprintf("%d", model.ContextSize))
+			}
+			args = append(args, modelName)
+			if len(model.RuntimeFlags) > 0 {
+				args = append(args, "--")
+				args = append(args, model.RuntimeFlags...)
+			}
+
+			input.Logger.Info(fmt.Sprintf("Configuring model: model=%s", modelName))
+			_, err := input.Executor(ctx, ExecCommandInput{
+				Command: "docker",
+				Args:    args,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to configure model %s: %v", modelName, err)
+			}
+
+			return nil
+		})
+	}
+
+	return g.Wait()
 }
 
 // ShouldSkipServiceInput is the input for the shouldSkipService function
