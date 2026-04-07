@@ -210,6 +210,12 @@ prebuild:
 test:
 	go test -v ./internal/...
 
+install-mock-model-plugin:
+	go build -o $(HOME)/.docker/cli-plugins/docker-model ./tests/fixtures/models-plugin-installed
+
+uninstall-mock-model-plugin:
+	rm -f $(HOME)/.docker/cli-plugins/docker-model
+
 coverage:
 	go test -coverprofile=coverage.out ./internal/...
 	go tool cover -func=coverage.out
