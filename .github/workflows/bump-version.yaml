@@ -33,7 +33,8 @@ jobs:
       - name: Get Latest Tag
         id: latest-tag
         run: |
-          echo GIT_LATEST_TAG="$(git describe --tags "$(git rev-list --tags --max-count=1)")" >>"$GITHUB_OUTPUT"
+          GIT_LATEST_TAG="$(git describe --tags "$(git rev-list --tags --max-count=1)" 2>/dev/null || echo "0.0.0")"
+          echo GIT_LATEST_TAG="$GIT_LATEST_TAG" >>"$GITHUB_OUTPUT"
 
       - name: Compute Next Tag
         id: next-tag
