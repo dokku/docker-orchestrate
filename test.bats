@@ -1205,6 +1205,74 @@ teardown() {
   assert_output_contains "Skipping unchanged service"
 }
 
+@test "replica-only scale-up preserves existing containers" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/replica-only-change"
+
+  # Initial deploy with 1 replica (default)
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-replica-only-up web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Capture the original container ID
+  original_id=$(docker ps -q --no-trunc --filter "label=com.docker.compose.project=bats-replica-only-up" --filter "label=com.docker.compose.service=web")
+  echo "original container: $original_id"
+
+  # Scale up to 3 replicas
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-replica-only-up --replicas 3 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify replica-only change was detected (no rolling update)
+  assert_output_contains "Scaling replica-only change"
+  [[ "$output" != *"Starting rolling update"* ]]
+
+  # Verify 3 containers are running
+  count=$(docker ps -q --filter "label=com.docker.compose.project=bats-replica-only-up" --filter "label=com.docker.compose.service=web" | wc -l | tr -d ' ')
+  assert_equal "3" "$count"
+
+  # Verify the original container is still running (not replaced)
+  run docker ps -q --no-trunc --filter "id=$original_id" --filter "status=running"
+  echo "original still running: $output"
+  [[ -n "$output" ]]
+}
+
+@test "replica-only scale-down preserves remaining containers" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/replica-only-change"
+
+  # Initial deploy with 3 replicas
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-replica-only-down --replicas 3 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Capture all 3 container IDs
+  original_ids=$(docker ps -q --no-trunc --filter "label=com.docker.compose.project=bats-replica-only-down" --filter "label=com.docker.compose.service=web" | sort)
+  echo "original containers: $original_ids"
+  original_count=$(echo "$original_ids" | wc -l | tr -d ' ')
+  assert_equal "3" "$original_count"
+
+  # Scale down to 1 replica
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-replica-only-down --replicas 1 web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Verify replica-only change was detected (no rolling update)
+  assert_output_contains "Scaling replica-only change"
+  [[ "$output" != *"Starting rolling update"* ]]
+
+  # Verify 1 container is running
+  count=$(docker ps -q --filter "label=com.docker.compose.project=bats-replica-only-down" --filter "label=com.docker.compose.service=web" | wc -l | tr -d ' ')
+  assert_equal "1" "$count"
+
+  # Verify the surviving container was one of the originals
+  surviving_id=$(docker ps -q --no-trunc --filter "label=com.docker.compose.project=bats-replica-only-down" --filter "label=com.docker.compose.service=web")
+  echo "surviving container: $surviving_id"
+  echo "$original_ids" | grep -q "$surviving_id"
+}
+
 @test "anonymous volume warning shown during deploy" {
   cd "${BATS_TEST_DIRNAME}/tests/fixtures/anonymous-volume-warning"
 

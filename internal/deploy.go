@@ -313,7 +313,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// Check if service config is unchanged and can be skipped
-	unchanged, err := serviceConfigUnchanged(ctx, ServiceConfigUnchangedInput{
+	configStatus, err := serviceConfigStatus(ctx, ServiceConfigStatusInput{
 		BuildImage:   buildImage,
 		Client:       input.Client,
 		ComposeFiles: input.ComposeFiles,
@@ -330,7 +330,7 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	if err != nil {
 		return err
 	}
-	if unchanged {
+	if configStatus == ServiceConfigUnchanged {
 		return nil
 	}
 
@@ -544,42 +544,46 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
-	// Pre-build image when build flag is set
-	if buildImage {
-		input.Logger.Info(fmt.Sprintf("Building image for service %s", input.ServiceName))
-		buildArgs := []string{"compose"}
-		buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
-		buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
-		buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
-		_, err = executor(ctx, ExecCommandInput{
-			Command:          "docker",
-			Args:             buildArgs,
-			WorkingDirectory: projectDir,
-		})
-		if err != nil {
-			return fmt.Errorf("error building image for service %s: %v", input.ServiceName, err)
+	// Skip build, pull, and volume warnings for replica-only changes since
+	// existing containers already have the correct config
+	if configStatus != ServiceReplicaOnlyChange {
+		// Pre-build image when build flag is set
+		if buildImage {
+			input.Logger.Info(fmt.Sprintf("Building image for service %s", input.ServiceName))
+			buildArgs := []string{"compose"}
+			buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
+			buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
+			buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
+			_, err = executor(ctx, ExecCommandInput{
+				Command:          "docker",
+				Args:             buildArgs,
+				WorkingDirectory: projectDir,
+			})
+			if err != nil {
+				return fmt.Errorf("error building image for service %s: %v", input.ServiceName, err)
+			}
 		}
-	}
 
-	// Pre-pull image when pull policy is "always" and not building
-	if pullPolicy == "always" && !buildImage {
-		input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
-		pullArgs := []string{"compose"}
-		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
-		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
-		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
-		_, err = executor(ctx, ExecCommandInput{
-			Command:          "docker",
-			Args:             pullArgs,
-			WorkingDirectory: projectDir,
-		})
-		if err != nil {
-			return fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
+		// Pre-pull image when pull policy is "always" and not building
+		if pullPolicy == "always" && !buildImage {
+			input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
+			pullArgs := []string{"compose"}
+			pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
+			pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+			pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
+			_, err = executor(ctx, ExecCommandInput{
+				Command:          "docker",
+				Args:             pullArgs,
+				WorkingDirectory: projectDir,
+			})
+			if err != nil {
+				return fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
+			}
 		}
-	}
 
-	// Warn about anonymous volumes that will lose data during rolling updates
-	warnAnonymousVolumes(ctx, input.Client, input.Logger, input.ProjectName, input.ServiceName, service)
+		// Warn about anonymous volumes that will lose data during rolling updates
+		warnAnonymousVolumes(ctx, input.Client, input.Logger, input.ProjectName, input.ServiceName, service)
+	}
 
 	// Get current running containers
 	currentContainers, err := composeContainers(ctx, ComposeContainersInput{
@@ -619,65 +623,69 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		}
 	}
 
-	// refresh the current containers
-	containersToUpdate, err := composeContainers(ctx, ComposeContainersInput{
-		Client:      input.Client,
-		ProjectName: input.ProjectName,
-		ServiceName: input.ServiceName,
-		Status:      "running",
-	})
-	if err != nil {
-		return fmt.Errorf("error getting updated containers: %v", err)
-	}
-
-	// Perform rolling update on existing containers first
-	if len(containersToUpdate) > replicas {
-		// Only update up to the target replica count
-		containersToUpdate = containersToUpdate[:replicas]
-	}
-	// sort containersToUpdate by health status (unhealthy first), then restart count (most first), then oldest first
-	unhealthyCount := sortContainersByHealthThenCreationTime(ctx, input.Client, containersToUpdate)
-	if unhealthyCount > 0 {
-		input.Logger.Info(fmt.Sprintf("Prioritizing %d unhealthy container(s) for replacement", unhealthyCount))
-	}
-
+	// Skip rolling update for replica-only changes since existing containers
+	// already have the correct config hash
 	var rollingUpdateOutput RollingUpdateOutput
-	if len(containersToUpdate) > 0 {
-		rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
-			Build:                       buildImage,
-			Client:                      input.Client,
-			ComposeFiles:                input.ComposeFiles,
-			ContainersToUpdate:          containersToUpdate,
-			CurrentReplicas:             len(containersToUpdate),
-			Delay:                       delay,
-			DesiredReplicas:             replicas,
-			EnvFiles:                    input.EnvFiles,
-			EnvVars:                     input.EnvVars,
-			Executor:                    executor,
-			FailureAction:               updateConfig.FailureAction,
-			HealthcheckCommand:          healthcheckHostCommand,
-			HealthcheckWait:             healthcheckWait,
-			WaitAfterHealthy:            waitAfterHealthy,
-			Logger:                      input.Logger,
-			MaxFailureRatio:             maxFailureRatio,
-			Monitor:                     monitor,
-			Order:                       order,
-			Parallelism:                 parallelism,
-			PostStopHostCommand:         postStopHostCommand,
-			PostStopHostCommandDetached: postStopHostCommandDetached,
-			PreStopCommand:              preStopCommand,
-			PreStopHooks:                preStopHooks,
-			PreStopHostCommand:          preStopHostCommand,
-			PreStopHostCommandDetached:  preStopHostCommandDetached,
-			ProjectDir:                  projectDir,
-			ProjectName:                 input.ProjectName,
-			PullPolicy:                  pullPolicy,
-			RollbackConfig:              rollbackConfig,
-			ServiceName:                 input.ServiceName,
-			StopTimeout:                 stopTimeout,
+	if configStatus != ServiceReplicaOnlyChange {
+		// refresh the current containers
+		containersToUpdate, err := composeContainers(ctx, ComposeContainersInput{
+			Client:      input.Client,
+			ProjectName: input.ProjectName,
+			ServiceName: input.ServiceName,
+			Status:      "running",
 		})
 		if err != nil {
-			return fmt.Errorf("error rolling update containers: %v", err)
+			return fmt.Errorf("error getting updated containers: %v", err)
+		}
+
+		// Perform rolling update on existing containers first
+		if len(containersToUpdate) > replicas {
+			// Only update up to the target replica count
+			containersToUpdate = containersToUpdate[:replicas]
+		}
+		// sort containersToUpdate by health status (unhealthy first), then restart count (most first), then oldest first
+		unhealthyCount := sortContainersByHealthThenCreationTime(ctx, input.Client, containersToUpdate)
+		if unhealthyCount > 0 {
+			input.Logger.Info(fmt.Sprintf("Prioritizing %d unhealthy container(s) for replacement", unhealthyCount))
+		}
+
+		if len(containersToUpdate) > 0 {
+			rollingUpdateOutput, err = rollingUpdateContainers(ctx, RollingUpdateInput{
+				Build:                       buildImage,
+				Client:                      input.Client,
+				ComposeFiles:                input.ComposeFiles,
+				ContainersToUpdate:          containersToUpdate,
+				CurrentReplicas:             len(containersToUpdate),
+				Delay:                       delay,
+				DesiredReplicas:             replicas,
+				EnvFiles:                    input.EnvFiles,
+				EnvVars:                     input.EnvVars,
+				Executor:                    executor,
+				FailureAction:               updateConfig.FailureAction,
+				HealthcheckCommand:          healthcheckHostCommand,
+				HealthcheckWait:             healthcheckWait,
+				WaitAfterHealthy:            waitAfterHealthy,
+				Logger:                      input.Logger,
+				MaxFailureRatio:             maxFailureRatio,
+				Monitor:                     monitor,
+				Order:                       order,
+				Parallelism:                 parallelism,
+				PostStopHostCommand:         postStopHostCommand,
+				PostStopHostCommandDetached: postStopHostCommandDetached,
+				PreStopCommand:              preStopCommand,
+				PreStopHooks:                preStopHooks,
+				PreStopHostCommand:          preStopHostCommand,
+				PreStopHostCommandDetached:  preStopHostCommandDetached,
+				ProjectDir:                  projectDir,
+				ProjectName:                 input.ProjectName,
+				PullPolicy:                  pullPolicy,
+				RollbackConfig:              rollbackConfig,
+				ServiceName:                 input.ServiceName,
+				StopTimeout:                 stopTimeout,
+			})
+			if err != nil {
+				return fmt.Errorf("error rolling update containers: %v", err)
+			}
 		}
 	}
 
@@ -862,8 +870,20 @@ type ShouldSkipScaleDownServiceInput struct {
 	Logger *command.ZerologUi
 }
 
-// ServiceConfigUnchangedInput is the input for the serviceConfigUnchanged function
-type ServiceConfigUnchangedInput struct {
+// ServiceConfigStatus represents the result of checking service configuration
+type ServiceConfigStatus int
+
+const (
+	// ServiceConfigChanged means the service config has changed and a full deploy is needed
+	ServiceConfigChanged ServiceConfigStatus = iota
+	// ServiceConfigUnchanged means the service is identical and can be skipped entirely
+	ServiceConfigUnchanged
+	// ServiceReplicaOnlyChange means only the replica count differs; skip rolling update, only scale
+	ServiceReplicaOnlyChange
+)
+
+// ServiceConfigStatusInput is the input for the serviceConfigStatus function
+type ServiceConfigStatusInput struct {
 	// BuildImage is whether images will actually be built for this service
 	BuildImage bool
 	// Client is the Docker client to use
@@ -890,22 +910,24 @@ type ServiceConfigUnchangedInput struct {
 	ServiceName string
 }
 
-// serviceConfigUnchanged checks if all running containers for a service
-// already have the same config hash as the current compose configuration.
-// Returns true if the deploy can be skipped.
-func serviceConfigUnchanged(ctx context.Context, input ServiceConfigUnchangedInput) (bool, error) {
+// serviceConfigStatus checks all running containers for a service against
+// the current compose configuration and returns the appropriate action:
+//   - ServiceConfigUnchanged: all hashes match and replica count matches, skip entirely
+//   - ServiceReplicaOnlyChange: all hashes match but replica count differs, only scale up/down
+//   - ServiceConfigChanged: config has changed, full deploy needed
+func serviceConfigStatus(ctx context.Context, input ServiceConfigStatusInput) (ServiceConfigStatus, error) {
 	if input.Force {
-		return false, nil
+		return ServiceConfigChanged, nil
 	}
 
 	if input.BuildImage {
-		return false, nil
+		return ServiceConfigChanged, nil
 	}
 
 	// Compute expected config hash from compose file
 	expectedHash, err := compose.ServiceHash(*input.Service)
 	if err != nil {
-		return false, fmt.Errorf("error computing service hash: %v", err)
+		return ServiceConfigChanged, fmt.Errorf("error computing service hash: %v", err)
 	}
 
 	// Get running containers for this service
@@ -916,24 +938,19 @@ func serviceConfigUnchanged(ctx context.Context, input ServiceConfigUnchangedInp
 		Status:      "running",
 	})
 	if err != nil {
-		return false, fmt.Errorf("error getting current containers for config hash check: %v", err)
+		return ServiceConfigChanged, fmt.Errorf("error getting current containers for config hash check: %v", err)
 	}
 
 	// No running containers = first deploy, always proceed
 	if len(currentContainers) == 0 {
-		return false, nil
-	}
-
-	// Replica count mismatch = need scaling, proceed
-	if len(currentContainers) != input.Replicas {
-		return false, nil
+		return ServiceConfigChanged, nil
 	}
 
 	// Check that ALL running containers have the matching config hash
 	for _, c := range currentContainers {
 		containerHash := c.Labels[api.ConfigHashLabel]
 		if containerHash != expectedHash {
-			return false, nil
+			return ServiceConfigChanged, nil
 		}
 	}
 
@@ -957,26 +974,32 @@ func serviceConfigUnchanged(ctx context.Context, input ServiceConfigUnchangedInp
 			WorkingDirectory: projectDir,
 		})
 		if err != nil {
-			return false, fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
+			return ServiceConfigChanged, fmt.Errorf("error pulling image for service %s: %v", input.ServiceName, err)
 		}
 
 		// Compare the pulled image ID with running containers' image IDs
 		imageInspect, err := input.Client.ImageInspect(ctx, input.Service.Image)
 		if err != nil {
 			// Can't inspect image, proceed with deploy to be safe
-			return false, nil
+			return ServiceConfigChanged, nil
 		}
 
 		for _, c := range currentContainers {
 			if c.ImageID != imageInspect.ID {
 				input.Logger.Info(fmt.Sprintf("Image changed for service %s, proceeding with deploy", input.ServiceName))
-				return false, nil
+				return ServiceConfigChanged, nil
 			}
 		}
 	}
 
+	// All hashes match and image is unchanged; check replica count
+	if len(currentContainers) != input.Replicas {
+		input.Logger.Info(fmt.Sprintf("Scaling replica-only change: service=%s, hash=%s, current=%d, desired=%d", input.ServiceName, expectedHash[:12], len(currentContainers), input.Replicas))
+		return ServiceReplicaOnlyChange, nil
+	}
+
 	input.Logger.Info(fmt.Sprintf("Skipping unchanged service: service=%s, hash=%s, replicas=%d", input.ServiceName, expectedHash[:12], len(currentContainers)))
-	return true, nil
+	return ServiceConfigUnchanged, nil
 }
 
 // shouldSkipScaleDownService returns true if the service should be skipped

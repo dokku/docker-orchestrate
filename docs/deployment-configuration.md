@@ -102,23 +102,29 @@ services:
 
 To avoid unnecessary container restarts, docker-orchestrate checks whether a service has actually changed before deploying it. It computes a configuration hash for each service and compares it against the hash stored on running containers (the `com.docker.compose.config-hash` label set by Docker Compose).
 
-A service is **skipped** when all of these are true:
+A service is **skipped entirely** when all of these are true:
 
 - All running containers have the same config hash as the new configuration
 - The number of running containers matches the desired replica count
 
-A service is **always deployed** when any of these are true:
+A service is **scaled only** (no rolling update) when all of these are true:
+
+- All running containers have the same config hash as the new configuration
+- The number of running containers does not match the desired replica count
+
+In this case, existing containers are left running and only the delta is acted on -- new containers are added for scale-up, or excess containers are removed for scale-down. This avoids unnecessary disruption when only the replica count changes.
+
+A service receives a **full deploy** (rolling update) when any of these are true:
 
 - It has no running containers (first deploy)
 - Any running container has a different config hash
-- The number of running containers does not match the desired replica count
 - The `--force` flag is specified
 - The `--build` flag is specified and the service has a `build` section
 - The pull policy is `always` (via `--pull always` or `pull_policy: always`) and the pulled image differs from the running containers' image
 
-When the pull policy is `always`, the image is pulled first and its digest is compared against the running containers. If the image is identical, the service is still skipped. This ensures upstream image updates are detected while avoiding unnecessary container cycling when the image has not changed.
+When the pull policy is `always`, the image is pulled first and its digest is compared against the running containers. If the image is identical, the service is still skipped or scaled only as appropriate. This ensures upstream image updates are detected while avoiding unnecessary container cycling when the image has not changed.
 
-When a service is skipped, per-service pre-deploy and post-deploy host commands are also skipped. Project-level hooks always run regardless.
+When a service is skipped entirely, per-service pre-deploy and post-deploy host commands are also skipped. Project-level hooks always run regardless.
 
 ## Container Stop Grace Period
 

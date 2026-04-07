@@ -4037,7 +4037,7 @@ func TestDeployServiceNoDeployConfig(t *testing.T) {
 	}
 }
 
-func TestServiceConfigUnchanged(t *testing.T) {
+func TestServiceConfigStatus(t *testing.T) {
 	service := types.ServiceConfig{
 		Name:  "web",
 		Image: "nginx:latest",
@@ -4056,13 +4056,13 @@ func TestServiceConfigUnchanged(t *testing.T) {
 		containers     []container.Summary
 		replicas       int
 		imageID        string
-		expectedResult bool
+		expectedResult ServiceConfigStatus
 	}{
 		{
 			name:           "no_containers_always_deploy",
 			containers:     []container.Summary{},
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
 			name: "all_hashes_match_same_replica_count",
@@ -4070,7 +4070,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
 			replicas:       1,
-			expectedResult: true,
+			expectedResult: ServiceConfigUnchanged,
 		},
 		{
 			name: "hash_mismatch",
@@ -4078,15 +4078,15 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
 			},
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
-			name: "replica_count_mismatch",
+			name: "replica_count_mismatch_hashes_match",
 			containers: []container.Summary{
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
 			replicas:       3,
-			expectedResult: false,
+			expectedResult: ServiceReplicaOnlyChange,
 		},
 		{
 			name: "partial_hash_match",
@@ -4095,7 +4095,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "bbb_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
 			},
 			replicas:       2,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
 			name:  "force_always_deploys",
@@ -4104,7 +4104,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
 			name:       "build_image_always_deploys",
@@ -4113,7 +4113,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
 			name: "missing_label_proceeds",
@@ -4121,7 +4121,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "aaa_container_id", Labels: map[string]string{}},
 			},
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
 		},
 		{
 			name: "multiple_containers_all_match",
@@ -4131,7 +4131,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				{ID: "ccc_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
 			},
 			replicas:       3,
-			expectedResult: true,
+			expectedResult: ServiceConfigUnchanged,
 		},
 		{
 			name:       "pull_always_same_image_skips",
@@ -4141,7 +4141,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 			},
 			imageID:        "sha256:abc123",
 			replicas:       1,
-			expectedResult: true,
+			expectedResult: ServiceConfigUnchanged,
 		},
 		{
 			name:       "pull_always_different_image_deploys",
@@ -4151,7 +4151,52 @@ func TestServiceConfigUnchanged(t *testing.T) {
 			},
 			imageID:        "sha256:new_image",
 			replicas:       1,
-			expectedResult: false,
+			expectedResult: ServiceConfigChanged,
+		},
+		{
+			name: "scale_up_all_hashes_match",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       3,
+			expectedResult: ServiceReplicaOnlyChange,
+		},
+		{
+			name: "scale_down_all_hashes_match",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "bbb_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "ccc_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			replicas:       1,
+			expectedResult: ServiceReplicaOnlyChange,
+		},
+		{
+			name: "replica_mismatch_with_hash_mismatch",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
+			},
+			replicas:       3,
+			expectedResult: ServiceConfigChanged,
+		},
+		{
+			name: "replica_mismatch_partial_hash_match",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+				{ID: "bbb_container_id", Labels: map[string]string{api.ConfigHashLabel: "wrong-hash"}},
+			},
+			replicas:       3,
+			expectedResult: ServiceConfigChanged,
+		},
+		{
+			name:       "pull_always_replica_change_same_image",
+			pullPolicy: "always",
+			containers: []container.Summary{
+				{ID: "aaa_container_id", ImageID: "sha256:abc123", Labels: map[string]string{api.ConfigHashLabel: expectedHash}},
+			},
+			imageID:        "sha256:abc123",
+			replicas:       3,
+			expectedResult: ServiceReplicaOnlyChange,
 		},
 	}
 
@@ -4182,7 +4227,7 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				return ExecCommandResponse{ExitCode: 0}, nil
 			}
 
-			result, err := serviceConfigUnchanged(context.Background(), ServiceConfigUnchangedInput{
+			result, err := serviceConfigStatus(context.Background(), ServiceConfigStatusInput{
 				BuildImage:   tt.buildImage,
 				Client:       mockClient,
 				ComposeFiles: []string{"/tmp/docker-compose.yaml"},
@@ -4204,10 +4249,15 @@ func TestServiceConfigUnchanged(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expectedResult, result)
 			}
 
-			if tt.expectedResult {
-				output := buf.String()
+			output := buf.String()
+			if tt.expectedResult == ServiceConfigUnchanged {
 				if !strings.Contains(output, "Skipping unchanged service") {
 					t.Errorf("expected 'Skipping unchanged service' in output, got: %s", output)
+				}
+			}
+			if tt.expectedResult == ServiceReplicaOnlyChange {
+				if !strings.Contains(output, "Scaling replica-only change") {
+					t.Errorf("expected 'Scaling replica-only change' in output, got: %s", output)
 				}
 			}
 		})
@@ -4288,6 +4338,179 @@ func TestDeployServiceSkipsUnchanged(t *testing.T) {
 
 	if executorCalled {
 		t.Errorf("expected executor to not be called when service is unchanged")
+	}
+}
+
+func TestDeployServiceReplicaOnlyScaleUp(t *testing.T) {
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	callCount := 0
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			callCount++
+			// Return 1 container with matching hash for all calls
+			return []container.Summary{
+				{
+					ID:      "aaa_container_id",
+					State:   "running",
+					Names:   []string{"/test-web-1"},
+					Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+					Created: 100,
+				},
+			}, nil
+		},
+		containerRename: func(ctx context.Context, containerID, newName string) error {
+			return nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": service,
+		},
+	}
+
+	err = DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		Replicas:              3,
+		ServiceName:           "web",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Scaling replica-only change") {
+		t.Errorf("expected 'Scaling replica-only change' in output, got: %s", output)
+	}
+	if strings.Contains(output, "Starting rolling update") {
+		t.Errorf("expected no rolling update for replica-only change, got: %s", output)
+	}
+}
+
+func TestDeployServiceReplicaOnlyScaleDown(t *testing.T) {
+	service := types.ServiceConfig{
+		Name:  "web",
+		Image: "nginx:latest",
+	}
+
+	expectedHash, err := compose.ServiceHash(service)
+	if err != nil {
+		t.Fatalf("failed to compute service hash: %v", err)
+	}
+
+	callCount := 0
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			callCount++
+			// Return 3 containers with matching hashes
+			return []container.Summary{
+				{
+					ID:      "aaa_container_id",
+					State:   "running",
+					Names:   []string{"/test-web-1"},
+					Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+					Created: 100,
+				},
+				{
+					ID:      "bbb_container_id",
+					State:   "running",
+					Names:   []string{"/test-web-2"},
+					Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+					Created: 200,
+				},
+				{
+					ID:      "ccc_container_id",
+					State:   "running",
+					Names:   []string{"/test-web-3"},
+					Labels:  map[string]string{api.ConfigHashLabel: expectedHash},
+					Created: 300,
+				},
+			}, nil
+		},
+		containerRename: func(ctx context.Context, containerID, newName string) error {
+			return nil
+		},
+		containerStop: func(ctx context.Context, containerID string, options container.StopOptions) error {
+			return nil
+		},
+		containerRemove: func(ctx context.Context, containerID string, options container.RemoveOptions) error {
+			return nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": service,
+		},
+	}
+
+	err = DeployService(context.Background(), DeployServiceInput{
+		Client:                mockClient,
+		Executor:              mockExecutor,
+		ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+		ContainerNameTemplate: "{{.ServiceName}}",
+		Logger:                logger,
+		Project:               project,
+		ProjectName:           "test",
+		Replicas:              1,
+		ServiceName:           "web",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "Scaling replica-only change") {
+		t.Errorf("expected 'Scaling replica-only change' in output, got: %s", output)
+	}
+	if strings.Contains(output, "Starting rolling update") {
+		t.Errorf("expected no rolling update for replica-only change, got: %s", output)
+	}
+	if !strings.Contains(output, "Scaling down containers") {
+		t.Errorf("expected 'Scaling down containers' in output, got: %s", output)
 	}
 }
 
