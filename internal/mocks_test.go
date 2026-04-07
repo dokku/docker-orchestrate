@@ -15,6 +15,7 @@ type mockDockerClient struct {
 	containerInspect     func(ctx context.Context, id string) (container.InspectResponse, error)
 	containerRemove      func(ctx context.Context, id string, options container.RemoveOptions) error
 	containerStart       func(ctx context.Context, id string, options container.StartOptions) error
+	containerStop        func(ctx context.Context, id string, options container.StopOptions) error
 	containerTerminate   func(ctx context.Context, id string, timeoutSeconds int) error
 	containerRename      func(ctx context.Context, id, name string) error
 	containerExecCreate  func(ctx context.Context, containerID string, config container.ExecOptions) (container.ExecCreateResponse, error)
@@ -50,6 +51,13 @@ func (m *mockDockerClient) ContainerRemove(ctx context.Context, id string, optio
 func (m *mockDockerClient) ContainerStart(ctx context.Context, id string, options container.StartOptions) error {
 	if m.containerStart != nil {
 		return m.containerStart(ctx, id, options)
+	}
+	return nil
+}
+
+func (m *mockDockerClient) ContainerStop(ctx context.Context, id string, options container.StopOptions) error {
+	if m.containerStop != nil {
+		return m.containerStop(ctx, id, options)
 	}
 	return nil
 }

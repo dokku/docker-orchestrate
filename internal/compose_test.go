@@ -1198,6 +1198,580 @@ func TestRollingUpdateBatchStartFirst(t *testing.T) {
 	})
 }
 
+func TestRollingUpdateBatchStartFirstRollback(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("rollback on healthcheck failure", func(t *testing.T) {
+		terminatedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: false, // will cause healthcheck failure
+						},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "rolled back") {
+			t.Errorf("expected error to contain 'rolled back', got '%s'", err.Error())
+		}
+		// Only the failed new container should be terminated, NOT the old one
+		if len(terminatedIds) != 1 || terminatedIds[0] != "new1_container_id" {
+			t.Errorf("expected only new1_container_id to be terminated, got %v", terminatedIds)
+		}
+		if output.Failures != 1 {
+			t.Errorf("expected 1 failure, got %d", output.Failures)
+		}
+	})
+
+	t.Run("rollback mode healthy containers", func(t *testing.T) {
+		terminatedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Old container should be terminated after batch (deferred cleanup)
+		if len(terminatedIds) != 1 || terminatedIds[0] != "old1_container_id" {
+			t.Errorf("expected old1_container_id to be terminated, got %v", terminatedIds)
+		}
+		if output.Failures != 0 {
+			t.Errorf("expected 0 failures, got %d", output.Failures)
+		}
+	})
+
+	t.Run("rollback with max_failure_ratio not exceeded", func(t *testing.T) {
+		terminatedIds := make([]string, 0)
+		listCallCount := 0
+		inspectCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+						{ID: "old2_container_id", Created: 60},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "old2_container_id", Created: 60},
+					{ID: "new1_container_id", Created: 300},
+					{ID: "new2_container_id", Created: 310},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				inspectCount++
+				// First new container healthy, second fails
+				if id == "new1_container_id" {
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{Running: true},
+						},
+					}, nil
+				}
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: false},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+			{ID: "old2_container_id", Created: 60},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        2,
+			MaxFailureRatio:    0.6, // 50% failure should NOT exceed 60% threshold
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if output.Failures != 1 {
+			t.Errorf("expected 1 failure, got %d", output.Failures)
+		}
+	})
+
+	t.Run("rollback with max_failure_ratio exceeded", func(t *testing.T) {
+		terminatedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{
+						{ID: "old1_container_id", Created: 50},
+						{ID: "old2_container_id", Created: 60},
+					}, nil
+				}
+				return []container.Summary{
+					{ID: "old1_container_id", Created: 50},
+					{ID: "old2_container_id", Created: 60},
+					{ID: "new1_container_id", Created: 300},
+					{ID: "new2_container_id", Created: 310},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				// First new container healthy, second fails
+				if id == "new1_container_id" {
+					return container.InspectResponse{
+						ContainerJSONBase: &container.ContainerJSONBase{
+							State: &container.State{Running: true},
+						},
+					}, nil
+				}
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{Running: false},
+					},
+				}, nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+			{ID: "old2_container_id", Created: 60},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        2,
+			MaxFailureRatio:    0.1, // 50% failure EXCEEDS 10% threshold
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStartFirst(ctx, input, batch, output)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "max failure ratio exceeded") {
+			t.Errorf("expected error to contain 'max failure ratio exceeded', got '%s'", err.Error())
+		}
+		if !strings.Contains(err.Error(), "rolling back") {
+			t.Errorf("expected error to contain 'rolling back', got '%s'", err.Error())
+		}
+		// Both the failed new container and the healthy new container should be terminated (rollback)
+		// Old containers should NOT be terminated
+		for _, id := range terminatedIds {
+			if id == "old1_container_id" || id == "old2_container_id" {
+				t.Errorf("old container %s should not be terminated during rollback", id)
+			}
+		}
+	})
+}
+
+func TestRollingUpdateBatchStopFirstRollback(t *testing.T) {
+	ctx := context.Background()
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("rollback on healthcheck failure", func(t *testing.T) {
+		stoppedIds := make([]string, 0)
+		startedIds := make([]string, 0)
+		terminatedIds := make([]string, 0)
+		removedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{}, nil
+				}
+				return []container.Summary{
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: false, // will cause healthcheck failure
+						},
+					},
+				}, nil
+			},
+			containerStop: func(ctx context.Context, id string, options container.StopOptions) error {
+				stoppedIds = append(stoppedIds, id)
+				return nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				startedIds = append(startedIds, id)
+				return nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+			containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
+				removedIds = append(removedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "rolled back") {
+			t.Errorf("expected error to contain 'rolled back', got '%s'", err.Error())
+		}
+		// Old container should have been stopped (not terminated)
+		if len(stoppedIds) != 1 || stoppedIds[0] != "old1_container_id" {
+			t.Errorf("expected old1_container_id to be stopped, got %v", stoppedIds)
+		}
+		// Old container should have been restarted
+		if len(startedIds) != 1 || startedIds[0] != "old1_container_id" {
+			t.Errorf("expected old1_container_id to be restarted, got %v", startedIds)
+		}
+		// New container should have been terminated
+		if len(terminatedIds) != 2 {
+			t.Errorf("expected 2 terminations (failed new + rollback cleanup), got %d: %v", len(terminatedIds), terminatedIds)
+		}
+		// Old container should NOT have been removed
+		if len(removedIds) != 0 {
+			t.Errorf("expected no containers removed during rollback, got %v", removedIds)
+		}
+	})
+
+	t.Run("rollback mode healthy containers", func(t *testing.T) {
+		stoppedIds := make([]string, 0)
+		startedIds := make([]string, 0)
+		terminatedIds := make([]string, 0)
+		removedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{}, nil
+				}
+				return []container.Summary{
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: true,
+						},
+					},
+				}, nil
+			},
+			containerStop: func(ctx context.Context, id string, options container.StopOptions) error {
+				stoppedIds = append(stoppedIds, id)
+				return nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				startedIds = append(startedIds, id)
+				return nil
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				terminatedIds = append(terminatedIds, id)
+				return nil
+			},
+			containerRemove: func(ctx context.Context, id string, options container.RemoveOptions) error {
+				removedIds = append(removedIds, id)
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Old container should have been stopped (not terminated)
+		if len(stoppedIds) != 1 || stoppedIds[0] != "old1_container_id" {
+			t.Errorf("expected old1_container_id to be stopped, got %v", stoppedIds)
+		}
+		// Old container should NOT have been restarted (success path)
+		if len(startedIds) != 0 {
+			t.Errorf("expected no containers restarted on success, got %v", startedIds)
+		}
+		// Old container should have been removed (cleanup after success)
+		if len(removedIds) != 1 || removedIds[0] != "old1_container_id" {
+			t.Errorf("expected old1_container_id to be removed, got %v", removedIds)
+		}
+		// No containers should have been terminated (ContainerTerminate not used in rollback success)
+		if len(terminatedIds) != 0 {
+			t.Errorf("expected no containers terminated, got %v", terminatedIds)
+		}
+	})
+
+	t.Run("rollback with restart failure", func(t *testing.T) {
+		startedIds := make([]string, 0)
+		listCallCount := 0
+		mock := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				listCallCount++
+				if listCallCount == 1 {
+					return []container.Summary{}, nil
+				}
+				return []container.Summary{
+					{ID: "new1_container_id", Created: 300},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						State: &container.State{
+							Running: false, // healthcheck fails
+						},
+					},
+				}, nil
+			},
+			containerStop: func(ctx context.Context, id string, options container.StopOptions) error {
+				return nil
+			},
+			containerStart: func(ctx context.Context, id string, options container.StartOptions) error {
+				startedIds = append(startedIds, id)
+				return fmt.Errorf("container not found")
+			},
+			containerTerminate: func(ctx context.Context, id string, timeoutSeconds int) error {
+				return nil
+			},
+		}
+
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		batch := []container.Summary{
+			{ID: "old1_container_id", Created: 50},
+		}
+
+		input := RollingUpdateInput{
+			Client:             mock,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
+			Parallelism:        1,
+			MaxFailureRatio:    0,
+			FailureAction:      "rollback",
+			ContainersToUpdate: batch,
+			StopTimeout:        10,
+			TickerCh:           testTickerCh(),
+		}
+
+		output := &RollingUpdateOutput{}
+		err := rollingUpdateBatchStopFirst(ctx, input, batch, output)
+		// Rollback error should still be returned even if restart fails
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "rolled back") {
+			t.Errorf("expected error to contain 'rolled back', got '%s'", err.Error())
+		}
+		// ContainerStart should have been attempted
+		if len(startedIds) != 1 || startedIds[0] != "old1_container_id" {
+			t.Errorf("expected ContainerStart to be called for old1_container_id, got %v", startedIds)
+		}
+		// Log output should contain the restart warning
+		logOutput := buf.String()
+		if !strings.Contains(logOutput, "failed to restart old container") {
+			t.Errorf("expected log to contain restart failure warning, got: %s", logOutput)
+		}
+	})
+}
+
 func TestScaleDownContainers(t *testing.T) {
 	ctx := context.Background()
 	var buf bytes.Buffer

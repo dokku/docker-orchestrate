@@ -4569,6 +4569,162 @@ func TestWarnAnonymousVolumes(t *testing.T) {
 	}
 }
 
+func TestDeployServiceFailureActionValidation(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+			return []container.Summary{}, nil
+		},
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	t.Run("failure_action rollback accepted", func(t *testing.T) {
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism:   &parallelism,
+							FailureAction: "rollback",
+							Order:         "start-first",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error for failure_action rollback: %v", err)
+		}
+	})
+
+	t.Run("failure_action pause accepted", func(t *testing.T) {
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism:   &parallelism,
+							FailureAction: "pause",
+							Order:         "start-first",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error for failure_action pause: %v", err)
+		}
+	})
+
+	t.Run("failure_action invalid rejected", func(t *testing.T) {
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism:   &parallelism,
+							FailureAction: "continue",
+							Order:         "start-first",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err == nil {
+			t.Fatal("expected error for invalid failure_action, got nil")
+		}
+		if !strings.Contains(err.Error(), "failure_action must be 'pause' or 'rollback'") {
+			t.Errorf("expected error to contain 'failure_action must be 'pause' or 'rollback'', got '%s'", err.Error())
+		}
+	})
+
+	t.Run("failure_action empty accepted", func(t *testing.T) {
+		parallelism := uint64(1)
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:latest",
+					Deploy: &types.DeployConfig{
+						UpdateConfig: &types.UpdateConfig{
+							Parallelism:   &parallelism,
+							FailureAction: "",
+							Order:         "start-first",
+						},
+					},
+				},
+			},
+		}
+
+		err := DeployService(context.Background(), DeployServiceInput{
+			Client:                mockClient,
+			Executor:              mockExecutor,
+			ComposeFiles:          []string{"/tmp/docker-compose.yaml"},
+			ContainerNameTemplate: "{{.ServiceName}}",
+			Logger:                logger,
+			Project:               project,
+			ProjectName:           "test",
+			ServiceName:           "web",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error for empty failure_action: %v", err)
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }

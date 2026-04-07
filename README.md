@@ -404,8 +404,35 @@ services:
 | `delay` | `10s` | Delay between update batches |
 | `order` | `start-first` | Update strategy: `start-first` (start new before stopping old) or `stop-first` (stop old before starting new) |
 | `monitor` | `5s` | Health check polling interval. Also determines the health check timeout (`monitor * 2`) for containers with Docker healthchecks |
-| `failure_action` | `pause` | Action on failure. Only `pause` is supported |
+| `failure_action` | `pause` | Action on failure: `pause` stops the deployment, `rollback` reverts to old containers |
 | `max_failure_ratio` | `0` | Maximum allowed failure ratio (0-1) before stopping the update |
+
+### Rollback Configuration
+
+When `failure_action` is set to `rollback`, failed deployments will attempt to restore the previous container state:
+
+- **start-first**: New containers that passed healthchecks are terminated, old containers (which were kept alive) continue serving traffic.
+- **stop-first**: Old containers (which were stopped but not removed) are restarted, and new containers are terminated.
+
+An optional `rollback_config` can be specified with the same fields as `update_config`:
+
+```yaml
+services:
+  web:
+    image: myapp:latest
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 5s
+```
+
+> **Note**: `failure_action: rollback` with `order: stop-first` has a limitation: if the old container fails to restart during rollback (e.g., the container was removed by an external process), the service may have reduced capacity. Use `order: start-first` for safer rollback behavior.
 
 ## Script Extensions
 
