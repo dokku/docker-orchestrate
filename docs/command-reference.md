@@ -117,8 +117,6 @@ Run the cron scheduler, spawner, and notifier together. This is the all-in-one c
 docker orchestrate cron [flags]
 ```
 
-#### Flags
-
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--build` | bool | `false` | Build images before running cron tasks. |
@@ -129,8 +127,6 @@ docker orchestrate cron [flags]
 | `--pull` | string | | Image pull policy: `always`, `missing`, or `never`. |
 | `--reload-interval` | string | `60s` | Config reload interval (Go duration format). |
 | `--timezone` | string | | Global default timezone for cron schedules (IANA timezone name). |
-
-#### Examples
 
 ```bash
 docker orchestrate cron -f docker-compose.yml -p myproject
@@ -147,8 +143,6 @@ Run the cron scheduler and spawner without the notifier. Use this with `cron not
 docker orchestrate cron run [flags]
 ```
 
-#### Flags
-
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--build` | bool | `false` | Build images before running cron tasks. |
@@ -159,8 +153,6 @@ docker orchestrate cron run [flags]
 | `--pull` | string | | Image pull policy: `always`, `missing`, or `never`. |
 | `--reload-interval` | string | `60s` | Config reload interval (Go duration format). |
 | `--timezone` | string | | Global default timezone for cron schedules (IANA timezone name). |
-
-#### Examples
 
 ```bash
 docker orchestrate cron run -f docker-compose.yml -p myproject
@@ -183,8 +175,6 @@ Generate and install init system service configs for the cron scheduler.
 docker orchestrate cron install [flags]
 ```
 
-#### Flags
-
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--config-dir` | string | | Directory to scan for projects (multi-project mode). |
@@ -194,8 +184,6 @@ docker orchestrate cron install [flags]
 | `--init` | string | `systemd` | Init system to generate configs for: `systemd` or `runit`. |
 | `-p, --project-name` | string | | The name of the project. |
 | `--split` | bool | `false` | Generate separate services for the scheduler and notifier. |
-
-#### Examples
 
 ```bash
 docker orchestrate cron install --init systemd -f docker-compose.yml -p myproject
@@ -213,8 +201,6 @@ Remove installed init system service configs for the cron scheduler.
 docker orchestrate cron uninstall [flags]
 ```
 
-#### Flags
-
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--dry-run` | bool | `false` | Print what would be removed without removing. |
@@ -222,8 +208,6 @@ docker orchestrate cron uninstall [flags]
 | `--init` | string | `systemd` | Init system to remove configs for: `systemd` or `runit`. |
 | `-p, --project-name` | string | | The name of the project. |
 | `--split` | bool | `false` | Remove separate scheduler and notifier services. |
-
-#### Examples
 
 ```bash
 docker orchestrate cron uninstall --init systemd -p myproject

@@ -142,7 +142,7 @@ The scheduler supports the following expression formats:
 
 ### Standard 5-Field
 
-```
+```text
 ┌───────── minute (0-59)
 │ ┌───────── hour (0-23)
 │ │ ┌───────── day of month (1-31)
@@ -153,6 +153,7 @@ The scheduler supports the following expression formats:
 ```
 
 Examples:
+
 - `0 2 * * *` -- every day at 2:00 AM
 - `*/15 * * * *` -- every 15 minutes
 - `0 9 * * MON-FRI` -- weekdays at 9:00 AM
@@ -162,7 +163,7 @@ Examples:
 
 An optional leading seconds field is supported:
 
-```
+```text
 ┌───────── second (0-59)
 │ ┌───────── minute (0-59)
 │ │ ┌───────── hour (0-23)
@@ -174,6 +175,7 @@ An optional leading seconds field is supported:
 ```
 
 Example:
+
 - `30 0 * * * *` -- every minute at the 30-second mark
 
 ### Named Schedules
@@ -295,7 +297,7 @@ You cannot combine single-project flags (`-f`, `-p`) with `--config-dir`.
 
 When using `--config-dir`, docker-orchestrate scans each subdirectory for compose projects. The directory layout looks like:
 
-```
+```text
 /etc/docker-orchestrate/
   myapp/
     docker-compose.yml
@@ -378,6 +380,7 @@ docker orchestrate cron install --init systemd --split -f /path/to/docker-compos
 ```
 
 This generates two units:
+
 - `docker-orchestrate-cron-myproject-run.service` -- runs `cron run`
 - `docker-orchestrate-cron-myproject-notify.service` -- runs `cron notify`
 
