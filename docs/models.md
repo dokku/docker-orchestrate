@@ -36,7 +36,7 @@ During service deployment, Docker Compose injects environment variables (e.g., `
 
 The [Docker Model plugin](https://docs.docker.com/desktop/features/ai-models/) must be installed when your project declares models. docker-orchestrate verifies this before deploying any services. If the plugin is missing, deployment fails immediately:
 
-```
+```text
 project references models but the docker-model plugin is not available
 ```
 
