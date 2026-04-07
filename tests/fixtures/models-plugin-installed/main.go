@@ -14,9 +14,9 @@ func main() {
 
 	switch os.Args[1] {
 	case "docker-cli-plugin-metadata":
-		fmt.Println(`{"SchemaVersion":"0.1.0","Vendor":"Docker Inc.","Version":"0.0.1-test","ShortDescription":"Mock Model Runner"}`)
+		fmt.Println(`{"SchemaVersion":"0.1.0","Vendor":"Docker Inc.","Version":"v0.1.0","ShortDescription":"Mock Model Runner"}`)
 	case "version":
-		fmt.Println("Docker Model Runner version 0.0.1-test")
+		fmt.Println("Docker Model Runner version v0.1.0")
 	case "ls":
 		fmt.Println("[]")
 	case "pull":
