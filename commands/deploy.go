@@ -78,9 +78,9 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.StringSliceVar(&c.profiles, "profile", []string{}, "one or more profiles to enable")
 	f.StringVar(&c.containerNameTemplate, "container-name-template", "{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}", "the template for the container name")
 	f.StringSliceVar(&c.envFiles, "env-file", []string{}, "one or more paths to environment files")
-	f.StringSliceVar(&c.files, "file", []string{}, "one or more paths to Compose files")
+	f.StringSliceVarP(&c.files, "file", "f", []string{}, "one or more paths to Compose files")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
-	f.StringVar(&c.projectName, "project-name", "", "the name of the project")
+	f.StringVarP(&c.projectName, "project-name", "p", "", "the name of the project")
 	f.StringVar(&c.pull, "pull", "", "pull image policy (always, missing, never)")
 	f.BoolVar(&c.skipDatabases, "skip-databases", false, "whether to skip deploying databases")
 	return f
