@@ -50,21 +50,6 @@ services:
 
 The label value must be exactly the string `"true"` (case-sensitive). Other values like `"false"`, `"yes"`, or `"1"` do not trigger skipping.
 
-## Model Services
-
-Services that define models (via the `models` field) are automatically skipped during deployment. Model services are used for service composition and are not deployed directly.
-
-```yaml
-services:
-  app:
-    models:
-      model1:
-        # model configuration
-  web:
-    image: nginx:alpine
-    # This service deploys normally
-```
-
 ## Provider Services
 
 Services that use external providers (defined via the `provider` field) are automatically skipped during deployment. Provider services are managed by external systems like cloud providers and should not be deployed by docker-orchestrate.

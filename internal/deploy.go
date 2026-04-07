@@ -60,6 +60,17 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		executor = ExecCommand
 	}
 
+	// Pre-flight check: verify docker-model plugin is available if project uses models
+	if input.Project != nil && len(input.Project.Models) > 0 {
+		_, err := executor(ctx, ExecCommandInput{
+			Command: "docker",
+			Args:    []string{"model", "version"},
+		})
+		if err != nil {
+			return fmt.Errorf("project references models but the docker-model plugin is not available: %v", err)
+		}
+	}
+
 	// Parse project-level deploy hook extensions
 	projectPreDeployHostCommand := ""
 	projectPostDeployHostCommand := ""
@@ -1031,14 +1042,6 @@ type ShouldSkipServiceInput struct {
 
 // shouldSkipService returns true if the service should be skipped
 func shouldSkipService(input ShouldSkipServiceInput) bool {
-	// skip model services
-	if len(input.Service.Models) > 0 {
-		if !input.SilenceLogging {
-			input.Logger.Info(fmt.Sprintf("Skipping model service: service=%s", input.Service.Name))
-		}
-		return true
-	}
-
 	// skip provider services
 	if input.Service.Provider != nil {
 		if !input.SilenceLogging {

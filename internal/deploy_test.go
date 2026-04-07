@@ -725,15 +725,15 @@ func TestShouldSkipService(t *testing.T) {
 			provider:            &types.ServiceProviderConfig{Type: "awesomecloud"},
 		},
 		{
-			name:                "model_service_skipped",
+			name:                "model_service_not_skipped",
 			image:               "nginx:alpine",
 			shouldSkipDatabases: false,
-			expectedResult:      true,
+			expectedResult:      false,
 			labels:              nil,
 			models:              map[string]*types.ServiceModelConfig{"model1": {}},
 		},
 		{
-			name:                "model_service_takes_precedence_over_provider",
+			name:                "model_service_with_provider_still_skipped_by_provider",
 			image:               "nginx:alpine",
 			shouldSkipDatabases: false,
 			expectedResult:      true,
@@ -742,15 +742,15 @@ func TestShouldSkipService(t *testing.T) {
 			models:              map[string]*types.ServiceModelConfig{"model1": {}},
 		},
 		{
-			name:                "model_service_takes_precedence_over_label",
+			name:                "model_service_with_false_skip_label_not_skipped",
 			image:               "nginx:alpine",
 			shouldSkipDatabases: false,
-			expectedResult:      true,
+			expectedResult:      false,
 			labels:              map[string]string{"com.dokku.orchestrate/skip": "false"},
 			models:              map[string]*types.ServiceModelConfig{"model1": {}},
 		},
 		{
-			name:                "model_service_takes_precedence_over_database",
+			name:                "model_service_with_database_still_skipped_by_database",
 			image:               "postgres:14",
 			shouldSkipDatabases: true,
 			expectedResult:      true,
@@ -3779,6 +3779,151 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 		// Only project pre-deploy should have run, not post-deploy
 		if scriptCount != 1 {
 			t.Errorf("expected 1 script (project pre only), got %d", scriptCount)
+		}
+	})
+}
+
+func TestDeployProjectModelPluginCheck(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("models present and plugin available succeeds", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "myapp:latest",
+					Models: map[string]*types.ServiceModelConfig{
+						"llm": {},
+					},
+				},
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("models present and plugin missing fails", func(t *testing.T) {
+		serviceCalled := false
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				serviceCalled = true
+				return []container.Summary{}, nil
+			},
+		}
+
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.Command == "docker" && len(input.Args) > 0 && input.Args[0] == "model" {
+				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("docker: 'model' is not a docker command")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Models: types.Models{
+				"llm": types.ModelConfig{
+					Model: "ai/smollm2",
+				},
+			},
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "myapp:latest",
+					Models: map[string]*types.ServiceModelConfig{
+						"llm": {},
+					},
+				},
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "docker-model plugin is not available") {
+			t.Errorf("expected docker-model plugin error, got: %v", err)
+		}
+		if serviceCalled {
+			t.Error("no service operations should have run when docker-model plugin is missing")
+		}
+	})
+
+	t.Run("no models skips the check", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+
+		modelCheckCalled := false
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			if input.Command == "docker" && len(input.Args) > 0 && input.Args[0] == "model" {
+				modelCheckCalled = true
+				return ExecCommandResponse{ExitCode: 1}, fmt.Errorf("should not be called")
+			}
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{
+					Name:  "web",
+					Image: "nginx:alpine",
+				},
+			},
+		}
+
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if modelCheckCalled {
+			t.Error("docker model version should not have been called when project has no models")
 		}
 	})
 }
