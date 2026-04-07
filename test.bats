@@ -1369,3 +1369,124 @@ teardown() {
   assert_output_contains "Pulling model"
   assert_output_contains "Configuring model"
 }
+
+@test "run execute runs one-shot service successfully" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-success"
+
+  run "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-success migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "One-shot service migrate completed successfully"
+}
+
+@test "run execute rejects non-one-shot service" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-not-one-shot"
+
+  run "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-not-one-shot web
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+  assert_output_contains "not a one-shot service"
+}
+
+@test "run execute rejects unknown service" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-success"
+
+  run "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-unknown nonexistent
+  echo "output: $output"
+  echo "status: $status"
+  assert_failure
+  assert_output_contains "not found"
+}
+
+@test "run execute labels containers for history" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-success"
+
+  run "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-labels migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # Container should exist (not removed) with run labels
+  run docker ps -a --filter "label=com.dokku.orchestrate/run=true" --filter "label=com.dokku.orchestrate/run-project=bats-run-exec-labels" --filter "label=com.dokku.orchestrate/run-service=migrate" -q
+  echo "labeled containers: $output"
+  [[ -n "$output" ]]
+
+  # Clean up the container
+  docker rm -f $output 2>/dev/null || true
+}
+
+@test "run execute runs deploy hooks" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-with-hooks"
+
+  run "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-hooks migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  [ -f /tmp/orch-run-pre ]
+  [ -f /tmp/orch-run-post ]
+
+  # Clean up labeled container
+  docker rm -f $(docker ps -a --filter "label=com.dokku.orchestrate/run-project=bats-run-exec-hooks" -q) 2>/dev/null || true
+}
+
+@test "run execute --detach returns immediately" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-success"
+
+  run "$DOCKER_ORCHESTRATE" run execute --detach --project-name bats-run-exec-detach migrate
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "started in background"
+
+  # Wait for container to finish
+  sleep 2
+
+  # Clean up labeled container
+  docker rm -f $(docker ps -a --filter "label=com.dokku.orchestrate/run-project=bats-run-exec-detach" -q) 2>/dev/null || true
+}
+
+@test "run list shows one-shot services" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-list"
+
+  run "$DOCKER_ORCHESTRATE" run list --project-name bats-run-list
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "./migrate up"
+  assert_output_contains "./seed-data"
+}
+
+@test "run list excludes long-running services" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-list"
+
+  run "$DOCKER_ORCHESTRATE" run list --project-name bats-run-list
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # web is not a one-shot service and should not appear
+  if echo "$output" | grep -q "^web"; then
+    flunk "web should not be listed as a one-shot service"
+  fi
+}
+
+@test "run list-executions shows executed containers" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/run-execute-success"
+
+  # First, execute a service to create history
+  "$DOCKER_ORCHESTRATE" run execute --project-name bats-run-exec-history migrate
+
+  # Now list executions
+  run "$DOCKER_ORCHESTRATE" run list-executions --project-name bats-run-exec-history
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "SERVICE"
+  assert_output_contains "exited"
+
+  # Clean up labeled container
+  docker rm -f $(docker ps -a --filter "label=com.dokku.orchestrate/run-project=bats-run-exec-history" -q) 2>/dev/null || true
+}

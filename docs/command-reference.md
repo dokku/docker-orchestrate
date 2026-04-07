@@ -107,6 +107,78 @@ The `--container-name-template` flag accepts a Go template with these variables:
 
 The default template produces names like `myproject-web-1`, `myproject-web-2`, etc.
 
+## Run
+
+### run list
+
+List one-shot services (`restart: "no"`) available for on-demand execution.
+
+```bash
+docker orchestrate run list [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | `docker-compose.yaml` | Path to a Compose configuration file. Can be specified multiple times. |
+| `--profile` | string (repeatable) | | One or more profiles to enable. |
+| `--project-directory` | string | | Specify an alternate working directory. |
+| `-p, --project-name` | string | directory name | Specify an alternate project name. |
+
+```bash
+docker orchestrate run list
+docker orchestrate run list -f docker-compose.prod.yaml -p myproject
+```
+
+### run execute
+
+Run a one-shot service on demand. The service must have `restart: "no"` set. By default, the service runs in the foreground with stdout and stderr streamed to the terminal. Use `--detach` to run in the background.
+
+```bash
+docker orchestrate run execute <service-name> [flags]
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `service-name` | Yes | The name of the one-shot service to run. |
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--build` | bool | `false` | Build images before running. |
+| `--detach` | bool | `false` | Run the service in the background. |
+| `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | `docker-compose.yaml` | Path to a Compose configuration file. Can be specified multiple times. |
+| `--profile` | string (repeatable) | | One or more profiles to enable. |
+| `--project-directory` | string | | Specify an alternate working directory. |
+| `-p, --project-name` | string | directory name | Specify an alternate project name. |
+| `--pull` | string | `missing` | Image pull policy: `always`, `missing`, or `never`. |
+
+```bash
+docker orchestrate run execute migrate
+docker orchestrate run execute seed --build
+docker orchestrate run execute export --detach
+docker orchestrate run execute migrate -f docker-compose.prod.yaml -p myproject
+```
+
+All `run execute` containers are labeled with metadata (`com.dokku.orchestrate/run=true` and project/service/timestamp labels) and persist after exit so they can be queried with `run list-executions`. Per-service [deploy hooks](hooks-and-scripts.md#per-service-deploy-commands) run around the service in foreground mode.
+
+### run list-executions
+
+List past and running one-shot service executions. Queries Docker for containers created by `run execute`.
+
+```bash
+docker orchestrate run list-executions [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-p, --project-name` | string | | Filter executions by project name. When omitted, all projects are shown. |
+
+```bash
+docker orchestrate run list-executions
+docker orchestrate run list-executions -p myproject
+```
+
 ## Cron
 
 ### cron
@@ -222,4 +294,5 @@ docker orchestrate cron uninstall --init systemd --dry-run -p myproject
 - [Cron Scheduling](cron-scheduling.md) -- full cron scheduling documentation
 - [Deployment Configuration](deployment-configuration.md) -- how `update_config` controls rolling updates
 - [Image Management](image-management.md) -- details on `--pull` and `--build` behavior
+- [One-Shot Services](one-shot-services.md) -- one-shot service behavior and manual execution
 - [Skipping Services](skipping-services.md) -- details on `--skip-databases` and other skip mechanisms

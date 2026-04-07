@@ -1,0 +1,11 @@
+---
+services:
+  migrate:
+    image: nginx:latest
+    command: ["echo", "migration-complete"]
+    restart: "no"
+    deploy:
+      x-pre-deploy-host-command: |
+        touch /tmp/orch-run-pre
+      x-post-deploy-host-command: |
+        touch /tmp/orch-run-post

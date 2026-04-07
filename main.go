@@ -65,6 +65,15 @@ func Commands(ctx context.Context, meta command.Meta) map[string]cli.CommandFact
 		"deploy": func() (cli.Command, error) {
 			return &commands.DeployCommand{Meta: meta}, nil
 		},
+		"run execute": func() (cli.Command, error) {
+			return &commands.RunExecuteCommand{Meta: meta}, nil
+		},
+		"run list": func() (cli.Command, error) {
+			return &commands.RunListCommand{Meta: meta}, nil
+		},
+		"run list-executions": func() (cli.Command, error) {
+			return &commands.RunListExecutionsCommand{Meta: meta}, nil
+		},
 		"docker-cli-plugin-metadata": func() (cli.Command, error) {
 			return &commands.DockerCliPluginMetadataCommand{Meta: meta, Version: Version}, nil
 		},
