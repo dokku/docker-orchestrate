@@ -185,7 +185,7 @@ func TestComposeFileArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := composeFileArgs(tt.files)
+			result := ComposeFileArgs(tt.files)
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d args, got %d: %v", len(tt.expected), len(result), result)
 			}
@@ -223,7 +223,7 @@ func TestEnvFileArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := envFileArgs(tt.files)
+			result := EnvFileArgs(tt.files)
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d args, got %d: %v", len(tt.expected), len(result), result)
 			}

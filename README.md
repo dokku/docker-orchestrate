@@ -1,6 +1,6 @@
 # docker-orchestrate
 
-A Docker CLI plugin to deploy Docker Compose services with support for rolling updates, custom healthchecks, and container naming conventions.
+A Docker CLI plugin to deploy Docker Compose services with support for rolling updates, cron scheduling, custom healthchecks, and container naming conventions.
 
 ## Installation
 
@@ -28,6 +28,12 @@ Deploy a specific service:
 docker orchestrate deploy web
 ```
 
+Run scheduled one-shot tasks via the built-in cron daemon:
+
+```bash
+docker orchestrate cron -f docker-compose.yml -p myproject
+```
+
 See the [command reference](docs/command-reference.md) for all flags and options.
 
 ## Documentation
@@ -39,6 +45,7 @@ See the [command reference](docs/command-reference.md) for all flags and options
 - [Hooks and Scripts](docs/hooks-and-scripts.md) -- lifecycle hooks, deploy/stop commands, and templating
 - [Image Management](docs/image-management.md) -- pull policy, building images, and volume warnings
 - [One-Shot Services](docs/one-shot-services.md) -- migrations, cache warming, and run-to-completion tasks
+- [Cron Scheduling](docs/cron-scheduling.md) -- scheduling one-shot services as recurring cron tasks
 - [Skipping Services](docs/skipping-services.md) -- excluding databases, labeled services, models, and providers
 - [Volumes](docs/volumes.md) -- anonymous volume warnings during rolling updates
 

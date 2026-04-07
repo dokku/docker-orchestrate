@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/local/bin/docker-orchestrate cron notify 2>&1

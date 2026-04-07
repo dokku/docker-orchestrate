@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/image"
 	dockerClient "github.com/docker/docker/client"
 )
@@ -25,8 +26,10 @@ type DockerClientInterface interface {
 	ContainerRename(ctx context.Context, containerID, newName string) error
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
+	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	ContainerTerminate(ctx context.Context, containerID string, timeoutSeconds int) error
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
+	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 }
 
 // DockerClient is a wrapper around the Docker client
@@ -120,7 +123,17 @@ func (d *DockerClient) ContainerExecInspect(ctx context.Context, execID string) 
 	return d.cli.ContainerExecInspect(ctx, execID)
 }
 
+// ContainerLogs returns logs from a container
+func (d *DockerClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+	return d.cli.ContainerLogs(ctx, containerID, options)
+}
+
 // CopyToContainer copies content to a container
 func (d *DockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {
 	return d.cli.CopyToContainer(ctx, containerID, dstPath, content, options)
+}
+
+// Events returns a stream of Docker events
+func (d *DockerClient) Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error) {
+	return d.cli.Events(ctx, options)
 }

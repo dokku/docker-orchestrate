@@ -107,8 +107,119 @@ The `--container-name-template` flag accepts a Go template with these variables:
 
 The default template produces names like `myproject-web-1`, `myproject-web-2`, etc.
 
+## Cron
+
+### cron
+
+Run the cron scheduler, spawner, and notifier together. This is the all-in-one command for running scheduled tasks.
+
+```bash
+docker orchestrate cron [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--build` | bool | `false` | Build images before running cron tasks. |
+| `--config-dir` | string | | Directory to scan for projects (multi-project mode). Cannot be combined with `-f`/`-p`. |
+| `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | | Path to a Compose configuration file. Can be specified multiple times to merge files. |
+| `-p, --project-name` | string | | The name of the project. |
+| `--pull` | string | | Image pull policy: `always`, `missing`, or `never`. |
+| `--reload-interval` | string | `60s` | Config reload interval (Go duration format). |
+| `--timezone` | string | | Global default timezone for cron schedules (IANA timezone name). |
+
+```bash
+docker orchestrate cron -f docker-compose.yml -p myproject
+docker orchestrate cron --config-dir /etc/docker-orchestrate
+docker orchestrate cron --config-dir /etc/docker-orchestrate --timezone America/New_York
+docker orchestrate cron --config-dir /etc/docker-orchestrate --reload-interval 120s
+```
+
+### cron run
+
+Run the cron scheduler and spawner without the notifier. Use this with `cron notify` in split mode.
+
+```bash
+docker orchestrate cron run [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--build` | bool | `false` | Build images before running cron tasks. |
+| `--config-dir` | string | | Directory to scan for projects (multi-project mode). Cannot be combined with `-f`/`-p`. |
+| `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | | Path to a Compose configuration file. Can be specified multiple times to merge files. |
+| `-p, --project-name` | string | | The name of the project. |
+| `--pull` | string | | Image pull policy: `always`, `missing`, or `never`. |
+| `--reload-interval` | string | `60s` | Config reload interval (Go duration format). |
+| `--timezone` | string | | Global default timezone for cron schedules (IANA timezone name). |
+
+```bash
+docker orchestrate cron run -f docker-compose.yml -p myproject
+docker orchestrate cron run --config-dir /etc/docker-orchestrate
+```
+
+### cron notify
+
+Run the cron notifier (Docker event listener and webhook sender). Listens for container die events from cron-labeled containers and sends webhook notifications. Has no project-specific flags -- it watches all Docker events globally.
+
+```bash
+docker orchestrate cron notify
+```
+
+### cron install
+
+Generate and install init system service configs for the cron scheduler.
+
+```bash
+docker orchestrate cron install [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--config-dir` | string | | Directory to scan for projects (multi-project mode). |
+| `--dry-run` | bool | `false` | Print generated configs without installing. |
+| `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | | Path to a Compose configuration file. Can be specified multiple times. |
+| `--init` | string | `systemd` | Init system to generate configs for: `systemd` or `runit`. |
+| `-p, --project-name` | string | | The name of the project. |
+| `--split` | bool | `false` | Generate separate services for the scheduler and notifier. |
+
+```bash
+docker orchestrate cron install --init systemd -f docker-compose.yml -p myproject
+docker orchestrate cron install --init systemd --split -f docker-compose.yml -p myproject
+docker orchestrate cron install --init runit -f docker-compose.yml -p myproject
+docker orchestrate cron install --init systemd --dry-run -f docker-compose.yml -p myproject
+docker orchestrate cron install --init systemd --config-dir /etc/docker-orchestrate
+```
+
+### cron uninstall
+
+Remove installed init system service configs for the cron scheduler.
+
+```bash
+docker orchestrate cron uninstall [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--dry-run` | bool | `false` | Print what would be removed without removing. |
+| `--include-notify` | bool | `false` | Also remove the shared notifier service (split mode only). |
+| `--init` | string | `systemd` | Init system to remove configs for: `systemd` or `runit`. |
+| `-p, --project-name` | string | | The name of the project. |
+| `--split` | bool | `false` | Remove separate scheduler and notifier services. |
+
+```bash
+docker orchestrate cron uninstall --init systemd -p myproject
+docker orchestrate cron uninstall --init systemd --split -p myproject
+docker orchestrate cron uninstall --init systemd --split --include-notify -p myproject
+docker orchestrate cron uninstall --init runit -p myproject
+docker orchestrate cron uninstall --init systemd --dry-run -p myproject
+```
+
 ## See Also
 
+- [Cron Scheduling](cron-scheduling.md) -- full cron scheduling documentation
 - [Deployment Configuration](deployment-configuration.md) -- how `update_config` controls rolling updates
 - [Image Management](image-management.md) -- details on `--pull` and `--build` behavior
 - [Skipping Services](skipping-services.md) -- details on `--skip-databases` and other skip mechanisms

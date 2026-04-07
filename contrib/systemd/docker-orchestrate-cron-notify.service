@@ -1,0 +1,14 @@
+[Unit]
+Description=docker-orchestrate cron notifier
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/docker-orchestrate cron notify
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

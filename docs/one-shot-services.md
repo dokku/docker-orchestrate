@@ -75,7 +75,24 @@ services:
 
 Here, `warm-cache` runs after `web`'s deployment completes (including healthchecks and scaling). The `condition` field documents the intent; docker-orchestrate ensures ordering via the dependency graph.
 
+## Cron-Scheduled One-Shot Services
+
+One-shot services with the `x-cron` extension are managed by the cron daemon rather than being deployed during `docker orchestrate deploy`. These services are automatically skipped during deployment and instead run on their configured schedule.
+
+```yaml
+services:
+  nightly-report:
+    image: myapp:latest
+    command: ["./generate-report"]
+    restart: "no"
+    x-cron:
+      schedule: "0 2 * * *"
+```
+
+See [Cron Scheduling](cron-scheduling.md) for full documentation on scheduling one-shot services as recurring tasks.
+
 ## See Also
 
+- [Cron Scheduling](cron-scheduling.md) -- scheduling one-shot services as recurring cron tasks
 - [Deployment Configuration](deployment-configuration.md) -- deployment order and how one-shot services fit in
 - [Hooks and Scripts](hooks-and-scripts.md) -- per-service deploy commands that also run for one-shot services

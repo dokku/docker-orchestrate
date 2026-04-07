@@ -1,0 +1,15 @@
+[Unit]
+Description=docker-orchestrate cron scheduler (scheduler only)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/docker-orchestrate cron run --config-dir /opt/apps
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

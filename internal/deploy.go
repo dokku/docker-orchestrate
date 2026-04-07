@@ -389,8 +389,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 	}
 
 	// Detect one-shot service and branch to dedicated handler
-	if isOneShotService(service) {
-		err := deployOneShotService(ctx, DeployOneShotServiceInput{
+	if IsOneShotService(service) {
+		err := DeployOneShotService(ctx, DeployOneShotServiceInput{
 			Build:        input.Build,
 			ComposeFiles: input.ComposeFiles,
 			EnvFiles:     input.EnvFiles,
@@ -571,8 +571,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		if buildImage {
 			input.Logger.Info(fmt.Sprintf("Building image for service %s", input.ServiceName))
 			buildArgs := []string{"compose"}
-			buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
-			buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
+			buildArgs = append(buildArgs, ComposeFileArgs(input.ComposeFiles)...)
+			buildArgs = append(buildArgs, EnvFileArgs(input.EnvFiles)...)
 			buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
 			_, err = executor(ctx, ExecCommandInput{
 				Command:          "docker",
@@ -588,8 +588,8 @@ func DeployService(ctx context.Context, input DeployServiceInput) error {
 		if pullPolicy == "always" && !buildImage {
 			input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
 			pullArgs := []string{"compose"}
-			pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
-			pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+			pullArgs = append(pullArgs, ComposeFileArgs(input.ComposeFiles)...)
+			pullArgs = append(pullArgs, EnvFileArgs(input.EnvFiles)...)
 			pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
 			_, err = executor(ctx, ExecCommandInput{
 				Command:          "docker",
@@ -812,7 +812,7 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	// Collect one-shot services with no dependencies
 	oneShotNoDeps := []string{}
 	for _, service := range input.Project.Services {
-		if isOneShotService(&service) && len(service.DependsOn) == 0 {
+		if IsOneShotService(&service) && len(service.DependsOn) == 0 {
 			oneShotNoDeps = append(oneShotNoDeps, service.Name)
 		}
 	}
@@ -985,8 +985,8 @@ func serviceConfigStatus(ctx context.Context, input ServiceConfigStatusInput) (S
 
 		input.Logger.Info(fmt.Sprintf("Pulling image for service %s", input.ServiceName))
 		pullArgs := []string{"compose"}
-		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
-		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+		pullArgs = append(pullArgs, ComposeFileArgs(input.ComposeFiles)...)
+		pullArgs = append(pullArgs, EnvFileArgs(input.EnvFiles)...)
 		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
 		_, err := executor(ctx, ExecCommandInput{
 			Command:          "docker",
@@ -1161,6 +1161,14 @@ type ShouldSkipServiceInput struct {
 
 // shouldSkipService returns true if the service should be skipped
 func shouldSkipService(input ShouldSkipServiceInput) bool {
+	// skip cron-scheduled services (managed by cron command, not deploy)
+	if IsCronService(input.Service) {
+		if !input.SilenceLogging {
+			input.Logger.Info(fmt.Sprintf("Skipping cron-scheduled service: service=%s", input.Service.Name))
+		}
+		return true
+	}
+
 	// skip provider services
 	if input.Service.Provider != nil {
 		if !input.SilenceLogging {
@@ -1291,12 +1299,18 @@ func ServiceReplicas(input DeployServiceInput, service *types.ServiceConfig) int
 	return replicas
 }
 
-// isOneShotService returns true if the service is a one-shot service (restart: "no")
-func isOneShotService(service *types.ServiceConfig) bool {
+// IsCronService returns true if the service has an x-cron extension configured
+func IsCronService(service *types.ServiceConfig) bool {
+	_, hasCron := service.Extensions["x-cron"]
+	return hasCron
+}
+
+// IsOneShotService returns true if the service is a one-shot service (restart: "no")
+func IsOneShotService(service *types.ServiceConfig) bool {
 	return service.Restart == "no"
 }
 
-// DeployOneShotServiceInput is the input for the deployOneShotService function
+// DeployOneShotServiceInput is the input for the DeployOneShotService function
 type DeployOneShotServiceInput struct {
 	// Build is whether to build images before running
 	Build bool
@@ -1318,10 +1332,10 @@ type DeployOneShotServiceInput struct {
 	ServiceName string
 }
 
-// deployOneShotService runs a one-shot service (restart: "no") to completion.
+// DeployOneShotService runs a one-shot service (restart: "no") to completion.
 // It runs `docker compose run --rm --no-deps <service>`, blocks until exit,
 // and returns an error on non-zero exit code.
-func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) error {
+func DeployOneShotService(ctx context.Context, input DeployOneShotServiceInput) error {
 	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, input.Service)
 	if err != nil {
 		return err
@@ -1338,8 +1352,8 @@ func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 	if buildImage {
 		input.Logger.Info(fmt.Sprintf("Building image for one-shot service %s", input.ServiceName))
 		buildArgs := []string{"compose"}
-		buildArgs = append(buildArgs, composeFileArgs(input.ComposeFiles)...)
-		buildArgs = append(buildArgs, envFileArgs(input.EnvFiles)...)
+		buildArgs = append(buildArgs, ComposeFileArgs(input.ComposeFiles)...)
+		buildArgs = append(buildArgs, EnvFileArgs(input.EnvFiles)...)
 		buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
 		_, err = executor(ctx, ExecCommandInput{
 			Command:          "docker",
@@ -1355,8 +1369,8 @@ func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 	if pullPolicy == "always" && !buildImage {
 		input.Logger.Info(fmt.Sprintf("Pulling image for one-shot service %s", input.ServiceName))
 		pullArgs := []string{"compose"}
-		pullArgs = append(pullArgs, composeFileArgs(input.ComposeFiles)...)
-		pullArgs = append(pullArgs, envFileArgs(input.EnvFiles)...)
+		pullArgs = append(pullArgs, ComposeFileArgs(input.ComposeFiles)...)
+		pullArgs = append(pullArgs, EnvFileArgs(input.EnvFiles)...)
 		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
 		_, err = executor(ctx, ExecCommandInput{
 			Command:          "docker",
@@ -1371,8 +1385,8 @@ func deployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 	// Run the one-shot service
 	input.Logger.Info(fmt.Sprintf("Running one-shot service %s", input.ServiceName))
 	runArgs := []string{"compose"}
-	runArgs = append(runArgs, composeFileArgs(input.ComposeFiles)...)
-	runArgs = append(runArgs, envFileArgs(input.EnvFiles)...)
+	runArgs = append(runArgs, ComposeFileArgs(input.ComposeFiles)...)
+	runArgs = append(runArgs, EnvFileArgs(input.EnvFiles)...)
 	runArgs = append(runArgs, "-p", input.ProjectName, "run", "--rm", "--no-deps", input.ServiceName)
 	resp, err := executor(ctx, ExecCommandInput{
 		Command:          "docker",
