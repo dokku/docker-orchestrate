@@ -1358,12 +1358,6 @@ teardown() {
   mkdir -p "$HOME/.docker/cli-plugins"
   cp docker-model "$HOME/.docker/cli-plugins/docker-model"
 
-  # Verify the mock plugin is recognized by Docker
-  if ! docker model version >/dev/null 2>&1; then
-    rm -f "$HOME/.docker/cli-plugins/docker-model"
-    skip "docker does not recognize the mock model plugin (Docker Desktop may not support mock plugins)"
-  fi
-
   run "$DOCKER_ORCHESTRATE" deploy --project-name bats-models-mock web
   echo "output: $output"
   echo "status: $status"
