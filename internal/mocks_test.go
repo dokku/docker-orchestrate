@@ -3,9 +3,11 @@ package internal
 import (
 	"context"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/image"
 )
 
@@ -119,9 +121,19 @@ func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string) (im
 	return image.InspectResponse{}, nil
 }
 
+func (m *mockDockerClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
+}
+
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error {
 	if m.copyToContainer != nil {
 		return m.copyToContainer(ctx, containerID, dstPath, content, options)
 	}
 	return nil
+}
+
+func (m *mockDockerClient) Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error) {
+	msgCh := make(chan events.Message)
+	errCh := make(chan error, 1)
+	return msgCh, errCh
 }

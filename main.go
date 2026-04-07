@@ -47,6 +47,21 @@ func Run(args []string) int {
 // Returns a list of implemented commands
 func Commands(ctx context.Context, meta command.Meta) map[string]cli.CommandFactory {
 	return map[string]cli.CommandFactory{
+		"cron": func() (cli.Command, error) {
+			return &commands.CronCommand{Meta: meta}, nil
+		},
+		"cron install": func() (cli.Command, error) {
+			return &commands.CronInstallCommand{Meta: meta}, nil
+		},
+		"cron notify": func() (cli.Command, error) {
+			return &commands.CronNotifyCommand{Meta: meta}, nil
+		},
+		"cron run": func() (cli.Command, error) {
+			return &commands.CronRunCommand{Meta: meta}, nil
+		},
+		"cron uninstall": func() (cli.Command, error) {
+			return &commands.CronUninstallCommand{Meta: meta}, nil
+		},
 		"deploy": func() (cli.Command, error) {
 			return &commands.DeployCommand{Meta: meta}, nil
 		},

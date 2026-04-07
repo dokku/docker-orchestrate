@@ -71,9 +71,9 @@ func ComposeProject(ctx context.Context, projectName string, filenames []string,
 	return project, nil
 }
 
-// composeFileArgs returns the command-line arguments for specifying
+// ComposeFileArgs returns the command-line arguments for specifying
 // one or more compose files to docker compose (e.g., ["-f", "a.yml", "-f", "b.yml"]).
-func composeFileArgs(files []string) []string {
+func ComposeFileArgs(files []string) []string {
 	args := make([]string, 0, len(files)*2)
 	for _, f := range files {
 		args = append(args, "-f", f)
@@ -81,9 +81,9 @@ func composeFileArgs(files []string) []string {
 	return args
 }
 
-// envFileArgs returns the command-line arguments for specifying
+// EnvFileArgs returns the command-line arguments for specifying
 // one or more env files to docker compose (e.g., ["--env-file", "a.env", "--env-file", "b.env"]).
-func envFileArgs(files []string) []string {
+func EnvFileArgs(files []string) []string {
 	args := make([]string, 0, len(files)*2)
 	for _, f := range files {
 		args = append(args, "--env-file", f)
@@ -267,8 +267,8 @@ func rollingUpdateBatchStartFirst(ctx context.Context, input RollingUpdateInput,
 	// Start new containers
 	newScale := len(currentContainers) + len(batch)
 	args := []string{"compose"}
-	args = append(args, composeFileArgs(input.ComposeFiles)...)
-	args = append(args, envFileArgs(input.EnvFiles)...)
+	args = append(args, ComposeFileArgs(input.ComposeFiles)...)
+	args = append(args, EnvFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach")
 	if input.Build {
 		args = append(args, "--build")
@@ -811,8 +811,8 @@ func rollingUpdateBatchStopFirst(ctx context.Context, input RollingUpdateInput, 
 	// Start new containers
 	targetScale := len(currentContainers) + len(batch)
 	args := []string{"compose"}
-	args = append(args, composeFileArgs(input.ComposeFiles)...)
-	args = append(args, envFileArgs(input.EnvFiles)...)
+	args = append(args, ComposeFileArgs(input.ComposeFiles)...)
+	args = append(args, EnvFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "up", "--detach")
 	if input.Build {
 		args = append(args, "--build")
@@ -1219,8 +1219,8 @@ func scaleUpContainers(ctx context.Context, input ScaleUpContainersInput) error 
 
 	// Create all containers at once
 	args := []string{"compose"}
-	args = append(args, composeFileArgs(input.ComposeFiles)...)
-	args = append(args, envFileArgs(input.EnvFiles)...)
+	args = append(args, ComposeFileArgs(input.ComposeFiles)...)
+	args = append(args, EnvFileArgs(input.EnvFiles)...)
 	args = append(args, "-p", input.ProjectName, "create")
 	if input.Build {
 		args = append(args, "--build")

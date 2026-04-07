@@ -2742,9 +2742,9 @@ func TestIsOneShotService(t *testing.T) {
 				Name:    "test",
 				Restart: tt.restart,
 			}
-			result := isOneShotService(service)
+			result := IsOneShotService(service)
 			if result != tt.expected {
-				t.Errorf("isOneShotService() = %v, want %v for restart=%q", result, tt.expected, tt.restart)
+				t.Errorf("IsOneShotService() = %v, want %v for restart=%q", result, tt.expected, tt.restart)
 			}
 		})
 	}

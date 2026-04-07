@@ -67,7 +67,27 @@ services:
     # This service deploys normally
 ```
 
+## Cron-Scheduled Services
+
+Services with the `x-cron` extension are automatically skipped during deployment. These services are managed by the cron daemon (`docker orchestrate cron`) and run on their configured schedule rather than during `docker orchestrate deploy`.
+
+```yaml
+services:
+  nightly-report:
+    image: myapp:latest
+    command: ["./generate-report"]
+    restart: "no"
+    x-cron:
+      schedule: "0 2 * * *"
+  web:
+    image: myapp:latest
+    # This service deploys normally
+```
+
+No flag is needed -- cron-scheduled services are always skipped during deploy. See [Cron Scheduling](cron-scheduling.md) for details.
+
 ## See Also
 
 - [Command Reference](command-reference.md) -- the `--skip-databases` flag
+- [Cron Scheduling](cron-scheduling.md) -- scheduling one-shot services as recurring cron tasks
 - [Deployment Configuration](deployment-configuration.md) -- config hash comparison, another mechanism that skips unchanged services
