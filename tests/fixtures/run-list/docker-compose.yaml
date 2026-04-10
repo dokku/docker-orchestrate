@@ -1,0 +1,14 @@
+---
+services:
+  web:
+    image: nginx:latest
+  migrate:
+    image: nginx:latest
+    command: ["./migrate", "up"]
+    restart: "no"
+  seed:
+    image: nginx:latest
+    command: ["./seed-data"]
+    restart: "no"
+    labels:
+      com.dokku.orchestrate/skip: "true"

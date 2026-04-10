@@ -1316,12 +1316,18 @@ type DeployOneShotServiceInput struct {
 	Build bool
 	// ComposeFiles is the list of paths to the compose files
 	ComposeFiles []string
+	// ContainerName is the custom container name (empty = docker default)
+	ContainerName string
 	// EnvFiles is the list of paths to the env files
 	EnvFiles []string
 	// Executor is the command executor to use
 	Executor CommandExecutor
+	// Labels is the list of additional labels to attach to the container (e.g. "key=value")
+	Labels []string
 	// Logger is the logger to use
 	Logger *command.ZerologUi
+	// NoRemove when true skips the --rm flag so the container persists after exit
+	NoRemove bool
 	// ProjectName is the name of the project
 	ProjectName string
 	// PullPolicy is the pull policy override from the CLI flag
@@ -1330,10 +1336,12 @@ type DeployOneShotServiceInput struct {
 	Service *types.ServiceConfig
 	// ServiceName is the name of the service
 	ServiceName string
+	// StreamOutput streams stdout and stderr to the terminal
+	StreamOutput bool
 }
 
 // DeployOneShotService runs a one-shot service (restart: "no") to completion.
-// It runs `docker compose run --rm --no-deps <service>`, blocks until exit,
+// It runs `docker compose run [--rm] --no-deps <service>`, blocks until exit,
 // and returns an error on non-zero exit code.
 func DeployOneShotService(ctx context.Context, input DeployOneShotServiceInput) error {
 	pullPolicy, buildImage, err := ResolvePullPolicy(input.PullPolicy, input.Build, input.Service)
@@ -1356,9 +1364,11 @@ func DeployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 		buildArgs = append(buildArgs, EnvFileArgs(input.EnvFiles)...)
 		buildArgs = append(buildArgs, "-p", input.ProjectName, "build", input.ServiceName)
 		_, err = executor(ctx, ExecCommandInput{
-			Command:          "docker",
-			Args:             buildArgs,
-			WorkingDirectory: projectDir,
+			Command:            "docker",
+			Args:               buildArgs,
+			WorkingDirectory:   projectDir,
+			StreamStdio:        input.StreamOutput,
+			DisableStdioBuffer: input.StreamOutput,
 		})
 		if err != nil {
 			return fmt.Errorf("error building image for one-shot service %s: %v", input.ServiceName, err)
@@ -1373,9 +1383,11 @@ func DeployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 		pullArgs = append(pullArgs, EnvFileArgs(input.EnvFiles)...)
 		pullArgs = append(pullArgs, "-p", input.ProjectName, "pull", input.ServiceName)
 		_, err = executor(ctx, ExecCommandInput{
-			Command:          "docker",
-			Args:             pullArgs,
-			WorkingDirectory: projectDir,
+			Command:            "docker",
+			Args:               pullArgs,
+			WorkingDirectory:   projectDir,
+			StreamStdio:        input.StreamOutput,
+			DisableStdioBuffer: input.StreamOutput,
 		})
 		if err != nil {
 			return fmt.Errorf("error pulling image for one-shot service %s: %v", input.ServiceName, err)
@@ -1387,11 +1399,24 @@ func DeployOneShotService(ctx context.Context, input DeployOneShotServiceInput) 
 	runArgs := []string{"compose"}
 	runArgs = append(runArgs, ComposeFileArgs(input.ComposeFiles)...)
 	runArgs = append(runArgs, EnvFileArgs(input.EnvFiles)...)
-	runArgs = append(runArgs, "-p", input.ProjectName, "run", "--rm", "--no-deps", input.ServiceName)
+	runArgs = append(runArgs, "-p", input.ProjectName, "run")
+	if !input.NoRemove {
+		runArgs = append(runArgs, "--rm")
+	}
+	runArgs = append(runArgs, "--no-deps")
+	if input.ContainerName != "" {
+		runArgs = append(runArgs, "--name", input.ContainerName)
+	}
+	for _, label := range input.Labels {
+		runArgs = append(runArgs, "--label", label)
+	}
+	runArgs = append(runArgs, input.ServiceName)
 	resp, err := executor(ctx, ExecCommandInput{
-		Command:          "docker",
-		Args:             runArgs,
-		WorkingDirectory: projectDir,
+		Command:            "docker",
+		Args:               runArgs,
+		WorkingDirectory:   projectDir,
+		StreamStdio:        input.StreamOutput,
+		DisableStdioBuffer: input.StreamOutput,
 	})
 	if err != nil {
 		return fmt.Errorf("one-shot service %s failed (exit code %d): %v", input.ServiceName, resp.ExitCode, err)
