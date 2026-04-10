@@ -1,6 +1,6 @@
 module github.com/dokku/docker-orchestrate
 
-go 1.25.5
+go 1.26.2
 
 require (
 	github.com/compose-spec/compose-go/v2 v2.10.2
