@@ -1628,3 +1628,371 @@ func TestRunContainerScriptWithEnv(t *testing.T) {
 		t.Errorf("expected APP_ENV=production in exec env, got %v", capturedExecEnv)
 	}
 }
+
+func TestRunHostScriptAdditionalPaths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("invalid_template_returns_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{}
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		// Unclosed template action to force template.Parse error.
+		err := runHostScript(ctx, runScriptInput{
+			Client:     mockClient,
+			Executor:   executor,
+			Script:     "{{ .ContainerID",
+			ScriptType: "test",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error parsing") {
+			t.Errorf("expected template parse error, got: %v", err)
+		}
+	})
+
+	t.Run("single_line_shebang_no_body", func(t *testing.T) {
+		mockClient := &mockDockerClient{}
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		// Script is exactly a shebang with no body — exercises the else
+		// branch that sets scriptContent to "".
+		err := runHostScript(ctx, runScriptInput{
+			Client:     mockClient,
+			Executor:   executor,
+			Script:     "#!/bin/bash",
+			ScriptType: "test",
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty_shebang_falls_back_to_sh_c", func(t *testing.T) {
+		mockClient := &mockDockerClient{}
+		var capturedCmd string
+		var capturedArgs []string
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			capturedCmd = input.Command
+			capturedArgs = input.Args
+			return ExecCommandResponse{}, nil
+		}
+		// An input.Shebang of "#!" parses to nil (no interpreter), and the
+		// script itself has no shebang, so shebangArgs stays nil and the
+		// fallback /bin/sh -c branch runs.
+		err := runHostScript(ctx, runScriptInput{
+			Client:     mockClient,
+			Executor:   executor,
+			Script:     "echo fallback",
+			Shebang:    "#!",
+			ScriptType: "test",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedCmd != "/bin/sh" {
+			t.Errorf("expected /bin/sh fallback, got %q", capturedCmd)
+		}
+		if len(capturedArgs) < 2 || capturedArgs[0] != "-c" {
+			t.Errorf("expected -c args, got %v", capturedArgs)
+		}
+	})
+}
+
+func TestRunContainerScriptErrorPaths(t *testing.T) {
+	ctx := context.Background()
+	baseInspect := func(ctx context.Context, id string) (container.InspectResponse, error) {
+		return container.InspectResponse{
+			ContainerJSONBase: &container.ContainerJSONBase{ID: id},
+			Config:            &container.Config{Shell: []string{"/bin/sh"}},
+		}, nil
+	}
+	happyAttach := func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
+		return types.HijackedResponse{
+			Conn:   &mockConn{},
+			Reader: bufio.NewReader(strings.NewReader("")),
+		}, nil
+	}
+
+	t.Run("default_script_path_when_empty", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			// ScriptPath intentionally empty — should default to /tmp/pre-stop.sh
+			ServiceName: "svc",
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("inspect_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{}, errors.New("inspect boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error inspecting container") {
+			t.Errorf("expected inspect error, got: %v", err)
+		}
+	})
+
+	t.Run("copy_to_container_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			copyToContainer: func(ctx context.Context, id, dst string, content io.Reader, opts container.CopyToContainerOptions) error {
+				return errors.New("copy boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error copying script to container") {
+			t.Errorf("expected copy error, got: %v", err)
+		}
+	})
+
+	t.Run("exec_create_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{}, errors.New("create boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error creating exec instance") {
+			t.Errorf("expected exec create error, got: %v", err)
+		}
+	})
+
+	t.Run("exec_attach_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: func(ctx context.Context, id string, cfg container.ExecAttachOptions) (types.HijackedResponse, error) {
+				return types.HijackedResponse{}, errors.New("attach boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error attaching to exec instance") {
+			t.Errorf("expected attach error, got: %v", err)
+		}
+	})
+
+	t.Run("exec_start_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart: func(ctx context.Context, id string, cfg container.ExecStartOptions) error {
+				return errors.New("start boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error starting exec instance") {
+			t.Errorf("expected start error, got: %v", err)
+		}
+	})
+
+	t.Run("exec_inspect_error", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{}, errors.New("inspect exec boom")
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error inspecting exec instance") {
+			t.Errorf("expected exec-inspect error, got: %v", err)
+		}
+	})
+
+	t.Run("non_zero_exit_returns_error_with_output", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 17}, nil
+			},
+		}
+		// Use a long container ID to exercise the truncation branch at lines 431-433.
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "abcdef1234567890long",
+			Script:      "exit 17",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err == nil {
+			t.Fatal("expected error from non-zero exit")
+		}
+		var errWithOutput *ErrorWithOutput
+		if !errors.As(err, &errWithOutput) {
+			t.Fatalf("expected ErrorWithOutput, got: %T %v", err, err)
+		}
+		if !strings.Contains(errWithOutput.Error(), "exit code 17") {
+			t.Errorf("expected 'exit code 17' in error, got %v", errWithOutput.Error())
+		}
+	})
+
+	t.Run("fallback_to_image_shell_when_container_shell_missing", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID:    id,
+						Image: "myimage:latest",
+					},
+					Config: &container.Config{}, // no Shell
+				}, nil
+			},
+			imageInspect: func(ctx context.Context, imageID string) (image.InspectResponse, error) {
+				return image.InspectResponse{
+					Config: &dockerspec.DockerOCIImageConfig{
+						DockerOCIImageConfigExt: dockerspec.DockerOCIImageConfigExt{
+							Shell: []string{"/usr/bin/python3"},
+						},
+					},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				if len(cfg.Cmd) == 0 || cfg.Cmd[0] != "/usr/bin/python3" {
+					t.Errorf("expected python interpreter from image shell, got: %v", cfg.Cmd)
+				}
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "print('hi')",
+			ScriptPath:  "/tmp/pre-stop.py",
+			ServiceName: "svc",
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("fallback_to_sh_when_no_shell_info", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{ID: id},
+					Config:            &container.Config{},
+				}, nil
+			},
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				if len(cfg.Cmd) == 0 || cfg.Cmd[0] != "/bin/sh" {
+					t.Errorf("expected /bin/sh fallback, got: %v", cfg.Cmd)
+				}
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "echo hi",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("shebang_only_script_empty_body", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: baseInspect,
+			containerExecCreate: func(ctx context.Context, id string, cfg container.ExecOptions) (container.ExecCreateResponse, error) {
+				return container.ExecCreateResponse{ID: "e1"}, nil
+			},
+			containerExecAttach: happyAttach,
+			containerExecStart:  func(ctx context.Context, id string, cfg container.ExecStartOptions) error { return nil },
+			containerExecInspect: func(ctx context.Context, id string) (container.ExecInspect, error) {
+				return container.ExecInspect{ExitCode: 0}, nil
+			},
+		}
+		// Only a shebang, no body — exercises the single-line shebang branch
+		// where scriptContent is set to "".
+		err := runContainerScript(ctx, RunContainerScriptInput{
+			Client:      mockClient,
+			ContainerID: "c1",
+			Script:      "#!/bin/bash",
+			ScriptPath:  "/tmp/pre-stop.sh",
+			ServiceName: "svc",
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}

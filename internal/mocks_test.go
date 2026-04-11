@@ -24,8 +24,10 @@ type mockDockerClient struct {
 	containerExecStart   func(ctx context.Context, execID string, config container.ExecStartOptions) error
 	containerExecAttach  func(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 	containerExecInspect func(ctx context.Context, execID string) (container.ExecInspect, error)
+	containerLogs        func(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	copyToContainer      func(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 	imageInspect         func(ctx context.Context, imageID string) (image.InspectResponse, error)
+	eventsFunc           func(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	renamedContainers    map[string]string
 }
 
@@ -122,6 +124,9 @@ func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string) (im
 }
 
 func (m *mockDockerClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+	if m.containerLogs != nil {
+		return m.containerLogs(ctx, containerID, options)
+	}
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
@@ -133,6 +138,9 @@ func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dst
 }
 
 func (m *mockDockerClient) Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error) {
+	if m.eventsFunc != nil {
+		return m.eventsFunc(ctx, options)
+	}
 	msgCh := make(chan events.Message)
 	errCh := make(chan error, 1)
 	return msgCh, errCh

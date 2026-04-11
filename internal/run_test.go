@@ -750,3 +750,211 @@ func TestRunServiceValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestRunServiceDetachedBuild(t *testing.T) {
+	logger, _ := testLogger()
+	mockClient := &mockDockerClient{}
+
+	t.Run("build_flag_triggers_build_then_run", func(t *testing.T) {
+		var executedCommands [][]string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executedCommands = append(executedCommands, input.Args)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+
+		project := &types.Project{
+			Services: types.Services{
+				"export": types.ServiceConfig{
+					Name:    "export",
+					Restart: "no",
+					Image:   "myapp:latest",
+					Build:   &types.BuildConfig{Context: "."},
+				},
+			},
+		}
+
+		err := RunService(context.Background(), RunServiceInput{
+			Build:        true,
+			Client:       mockClient,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Detach:       true,
+			Executor:     mockExecutor,
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			ServiceName:  "export",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(executedCommands) != 2 {
+			t.Fatalf("expected 2 executor calls (build + run), got %d", len(executedCommands))
+		}
+		if !strings.Contains(strings.Join(executedCommands[0], " "), "build export") {
+			t.Errorf("first call should be build, got: %v", executedCommands[0])
+		}
+	})
+
+	t.Run("build_failure_returns_error", func(t *testing.T) {
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 1}, errors.New("build boom")
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"export": types.ServiceConfig{
+					Name:    "export",
+					Restart: "no",
+					Image:   "myapp:latest",
+					Build:   &types.BuildConfig{Context: "."},
+				},
+			},
+		}
+		err := RunService(context.Background(), RunServiceInput{
+			Build:        true,
+			Client:       mockClient,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Detach:       true,
+			Executor:     mockExecutor,
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			ServiceName:  "export",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error building image") {
+			t.Errorf("expected build error, got: %v", err)
+		}
+	})
+}
+
+func TestRunServiceDetachedPull(t *testing.T) {
+	logger, _ := testLogger()
+	mockClient := &mockDockerClient{}
+
+	t.Run("pull_always_triggers_pull_then_run", func(t *testing.T) {
+		var executedCommands [][]string
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			executedCommands = append(executedCommands, input.Args)
+			return ExecCommandResponse{ExitCode: 0}, nil
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"export": types.ServiceConfig{
+					Name:    "export",
+					Restart: "no",
+					Image:   "myapp:latest",
+				},
+			},
+		}
+		err := RunService(context.Background(), RunServiceInput{
+			Client:       mockClient,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Detach:       true,
+			Executor:     mockExecutor,
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			PullPolicy:   "always",
+			ServiceName:  "export",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(executedCommands) != 2 {
+			t.Fatalf("expected 2 calls (pull + run), got %d", len(executedCommands))
+		}
+		if !strings.Contains(strings.Join(executedCommands[0], " "), "pull export") {
+			t.Errorf("first call should be pull, got: %v", executedCommands[0])
+		}
+	})
+
+	t.Run("pull_failure_returns_error", func(t *testing.T) {
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{ExitCode: 1}, errors.New("pull boom")
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"export": types.ServiceConfig{
+					Name:    "export",
+					Restart: "no",
+					Image:   "myapp:latest",
+				},
+			},
+		}
+		err := RunService(context.Background(), RunServiceInput{
+			Client:       mockClient,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Detach:       true,
+			Executor:     mockExecutor,
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			PullPolicy:   "always",
+			ServiceName:  "export",
+		})
+		if err == nil || !strings.Contains(err.Error(), "error pulling image") {
+			t.Errorf("expected pull error, got: %v", err)
+		}
+	})
+}
+
+func TestRunServiceDetachedRunError(t *testing.T) {
+	logger, _ := testLogger()
+	mockClient := &mockDockerClient{}
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 1}, errors.New("run boom")
+	}
+	project := &types.Project{
+		Services: types.Services{
+			"export": types.ServiceConfig{
+				Name:    "export",
+				Restart: "no",
+				Image:   "myapp:latest",
+			},
+		},
+	}
+	err := RunService(context.Background(), RunServiceInput{
+		Client:       mockClient,
+		ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+		Detach:       true,
+		Executor:     mockExecutor,
+		Logger:       logger,
+		Project:      project,
+		ProjectName:  "test",
+		ServiceName:  "export",
+	})
+	if err == nil || !strings.Contains(err.Error(), "error spawning one-shot service") {
+		t.Errorf("expected run error, got: %v", err)
+	}
+}
+
+func TestRunServiceInvalidPullPolicy(t *testing.T) {
+	logger, _ := testLogger()
+	mockClient := &mockDockerClient{}
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+	// pull_policy "build" with no Build section triggers ResolvePullPolicy error.
+	project := &types.Project{
+		Services: types.Services{
+			"export": types.ServiceConfig{
+				Name:       "export",
+				Restart:    "no",
+				Image:      "myapp:latest",
+				PullPolicy: types.PullPolicyBuild,
+			},
+		},
+	}
+	err := RunService(context.Background(), RunServiceInput{
+		Client:       mockClient,
+		ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+		Detach:       true,
+		Executor:     mockExecutor,
+		Logger:       logger,
+		Project:      project,
+		ProjectName:  "test",
+		ServiceName:  "export",
+	})
+	if err == nil {
+		t.Error("expected error from invalid pull policy combo")
+	}
+}

@@ -219,4 +219,3 @@ uninstall-mock-model-plugin:
 coverage:
 	go test -coverprofile=coverage.out ./internal/...
 	go tool cover -func=coverage.out
-	rm coverage.out

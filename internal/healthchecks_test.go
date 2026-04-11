@@ -318,3 +318,80 @@ func TestWaitForDockerHealthCheck(t *testing.T) {
 		}
 	})
 }
+
+func TestWaitForHealthcheck(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil_client_returns_error", func(t *testing.T) {
+		err := waitForHealthcheck(ctx, WaitForHealthcheckInput{})
+		if err == nil || !strings.Contains(err.Error(), "client is required") {
+			t.Errorf("expected client-required error, got: %v", err)
+		}
+	})
+
+	t.Run("nil_executor_returns_error", func(t *testing.T) {
+		err := waitForHealthcheck(ctx, WaitForHealthcheckInput{
+			Client: &mockDockerClient{},
+		})
+		if err == nil || !strings.Contains(err.Error(), "executor is required") {
+			t.Errorf("expected executor-required error, got: %v", err)
+		}
+	})
+
+	t.Run("docker_healthcheck_error_propagates", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{}, errors.New("inspect boom")
+			},
+		}
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		tickerCh := make(chan time.Time, 1)
+		tickerCh <- time.Now()
+		err := waitForHealthcheck(ctx, WaitForHealthcheckInput{
+			Client:      mockClient,
+			ContainerID: "abc",
+			Executor:    executor,
+			Monitor:     1 * time.Millisecond,
+			TickerCh:    tickerCh,
+		})
+		if err == nil || !strings.Contains(err.Error(), "error inspecting container") {
+			t.Errorf("expected inspect error, got: %v", err)
+		}
+	})
+
+	t.Run("success_path_runs_host_script", func(t *testing.T) {
+		running := true
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{
+						ID: id,
+						State: &container.State{
+							Running: running,
+							Health:  &container.Health{Status: "healthy"},
+						},
+					},
+					Config: &container.Config{},
+				}, nil
+			},
+		}
+		executor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		tickerCh := make(chan time.Time, 1)
+		tickerCh <- time.Now()
+		err := waitForHealthcheck(ctx, WaitForHealthcheckInput{
+			Client:             mockClient,
+			ContainerID:        "abc",
+			Executor:           executor,
+			Monitor:            1 * time.Millisecond,
+			TickerCh:           tickerCh,
+			HealthcheckCommand: "", // empty script = noop runHostScript
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}

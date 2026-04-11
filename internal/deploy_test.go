@@ -792,6 +792,221 @@ func TestShouldSkipService(t *testing.T) {
 	}
 }
 
+func TestDeployServiceValidation(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+	mockClient := &mockDockerClient{}
+	minimalProject := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{Name: "web"},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		input       DeployServiceInput
+		expectedErr string
+	}{
+		{
+			name: "empty_compose_files",
+			input: DeployServiceInput{
+				Client:      mockClient,
+				Logger:      logger,
+				Project:     minimalProject,
+				ProjectName: "test",
+				ServiceName: "web",
+			},
+			expectedErr: "compose file is required",
+		},
+		{
+			name: "empty_project_name",
+			input: DeployServiceInput{
+				Client:       mockClient,
+				ComposeFiles: []string{"/tmp/docker-compose.yml"},
+				Logger:       logger,
+				Project:      minimalProject,
+				ServiceName:  "web",
+			},
+			expectedErr: "project name is required",
+		},
+		{
+			name: "nil_project",
+			input: DeployServiceInput{
+				Client:       mockClient,
+				ComposeFiles: []string{"/tmp/docker-compose.yml"},
+				Logger:       logger,
+				ProjectName:  "test",
+				ServiceName:  "web",
+			},
+			expectedErr: "project is required",
+		},
+		{
+			name: "empty_service_name",
+			input: DeployServiceInput{
+				Client:       mockClient,
+				ComposeFiles: []string{"/tmp/docker-compose.yml"},
+				Logger:       logger,
+				Project:      minimalProject,
+				ProjectName:  "test",
+			},
+			expectedErr: "service name is required",
+		},
+		{
+			name: "service_not_in_project",
+			input: DeployServiceInput{
+				Client:       mockClient,
+				ComposeFiles: []string{"/tmp/docker-compose.yml"},
+				Logger:       logger,
+				Project:      minimalProject,
+				ProjectName:  "test",
+				ServiceName:  "missing-service",
+			},
+			expectedErr: "not found in compose file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := DeployService(context.Background(), tt.input)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.expectedErr) {
+				t.Errorf("expected error containing %q, got: %v", tt.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestDeployServiceSkipsCronService(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+	mockClient := &mockDockerClient{}
+	project := &types.Project{
+		Services: types.Services{
+			"backup": types.ServiceConfig{
+				Name: "backup",
+				Extensions: map[string]interface{}{
+					"x-cron": map[string]interface{}{"schedule": "@every 1h"},
+				},
+			},
+		},
+	}
+	err := DeployService(context.Background(), DeployServiceInput{
+		Client:       mockClient,
+		ComposeFiles: []string{"/tmp/docker-compose.yml"},
+		Logger:       logger,
+		Project:      project,
+		ProjectName:  "test",
+		ServiceName:  "backup",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Skipping cron-scheduled service") {
+		t.Errorf("expected skip log, got: %s", buf.String())
+	}
+}
+
+func TestShouldSkipServiceCronAndSilenceLogging(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	t.Run("cron_service_is_skipped", func(t *testing.T) {
+		buf.Reset()
+		service := &types.ServiceConfig{
+			Name:  "backup",
+			Image: "nginx:alpine",
+			Extensions: map[string]interface{}{
+				"x-cron": map[string]interface{}{"schedule": "@every 1h"},
+			},
+		}
+		if !shouldSkipService(ShouldSkipServiceInput{
+			Service: service,
+			Logger:  logger,
+		}) {
+			t.Error("expected cron service to be skipped")
+		}
+		if !strings.Contains(buf.String(), "Skipping cron-scheduled service") {
+			t.Errorf("expected cron skip log, got: %s", buf.String())
+		}
+	})
+
+	t.Run("silence_logging_cron", func(t *testing.T) {
+		buf.Reset()
+		service := &types.ServiceConfig{
+			Name: "backup",
+			Extensions: map[string]interface{}{
+				"x-cron": map[string]interface{}{"schedule": "@every 1h"},
+			},
+		}
+		if !shouldSkipService(ShouldSkipServiceInput{
+			Service:        service,
+			Logger:         logger,
+			SilenceLogging: true,
+		}) {
+			t.Error("expected cron service to be skipped")
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no log output with SilenceLogging, got: %s", buf.String())
+		}
+	})
+
+	t.Run("silence_logging_provider", func(t *testing.T) {
+		buf.Reset()
+		service := &types.ServiceConfig{
+			Name:     "x",
+			Provider: &types.ServiceProviderConfig{Type: "demo"},
+		}
+		if !shouldSkipService(ShouldSkipServiceInput{
+			Service:        service,
+			Logger:         logger,
+			SilenceLogging: true,
+		}) {
+			t.Error("expected provider service to be skipped")
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no log output with SilenceLogging, got: %s", buf.String())
+		}
+	})
+
+	t.Run("silence_logging_skip_label", func(t *testing.T) {
+		buf.Reset()
+		service := &types.ServiceConfig{
+			Name:   "x",
+			Labels: map[string]string{"com.dokku.orchestrate/skip": "true"},
+		}
+		if !shouldSkipService(ShouldSkipServiceInput{
+			Service:        service,
+			Logger:         logger,
+			SilenceLogging: true,
+		}) {
+			t.Error("expected labeled service to be skipped")
+		}
+		if buf.Len() != 0 {
+			t.Errorf("expected no log output with SilenceLogging, got: %s", buf.String())
+		}
+	})
+}
+
 func TestOrderServices(t *testing.T) {
 	ctx := context.Background()
 
@@ -5328,4 +5543,375 @@ func TestDeployServiceFailureActionValidation(t *testing.T) {
 
 func intPtr(i int) *int {
 	return &i
+}
+
+func TestRemoveMissingServices(t *testing.T) {
+	makeLogger := func() (*command.ZerologUi, *bytes.Buffer) {
+		var buf bytes.Buffer
+		logger := &command.ZerologUi{
+			StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			OriginalFields:    nil,
+			Ui:                nil,
+			OutputIndentField: false,
+		}
+		return logger, &buf
+	}
+
+	t.Run("first_list_error_returned", func(t *testing.T) {
+		logger, _ := makeLogger()
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return nil, errors.New("list boom")
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err == nil || !strings.Contains(err.Error(), "error querying containers") {
+			t.Errorf("expected list error, got: %v", err)
+		}
+	})
+
+	t.Run("no_containers_noop", func(t *testing.T) {
+		logger, _ := makeLogger()
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("all_containers_match_ordered_services", func(t *testing.T) {
+		logger, _ := makeLogger()
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{
+						ID:     "c1",
+						Labels: map[string]string{"com.docker.compose.service": "web"},
+					},
+				}, nil
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("container_without_service_label_skipped", func(t *testing.T) {
+		logger, _ := makeLogger()
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "c1", Labels: nil},
+					{ID: "c2", Labels: map[string]string{"some-other-label": "value"}},
+				}, nil
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("extra_service_second_list_error", func(t *testing.T) {
+		logger, _ := makeLogger()
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				if callCount == 1 {
+					return []container.Summary{
+						{
+							ID:     "c-extra",
+							Labels: map[string]string{"com.docker.compose.service": "legacy"},
+						},
+					}, nil
+				}
+				return nil, errors.New("current list boom")
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err == nil || !strings.Contains(err.Error(), "error getting current containers") {
+			t.Errorf("expected current-list error, got: %v", err)
+		}
+	})
+
+	t.Run("extra_service_removed_cleanly", func(t *testing.T) {
+		logger, _ := makeLogger()
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				if callCount == 1 {
+					return []container.Summary{
+						{
+							ID:     "c-extra",
+							Labels: map[string]string{"com.docker.compose.service": "legacy"},
+						},
+					}, nil
+				}
+				// Second call returns empty so scaleDownContainers early-returns.
+				return []container.Summary{}, nil
+			},
+		}
+		err := RemoveMissingServices(context.Background(), DeployProjectInput{
+			Client:      mockClient,
+			Logger:      logger,
+			ProjectName: "test",
+		}, []string{"web"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if callCount != 2 {
+			t.Errorf("expected 2 list calls, got %d", callCount)
+		}
+	})
+}
+
+func TestDeployProjectErrorPaths(t *testing.T) {
+	makeLogger := func() *command.ZerologUi {
+		var buf bytes.Buffer
+		return &command.ZerologUi{
+			StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			OriginalFields:    nil,
+			Ui:                nil,
+			OutputIndentField: false,
+		}
+	}
+
+	t.Run("invalid_pre_deploy_detached_flag", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{Name: "web"},
+			},
+			Extensions: map[string]interface{}{
+				"x-pre-deploy-host-command-detached": "not-a-bool",
+			},
+		}
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       makeLogger(),
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil || !strings.Contains(err.Error(), "must be a boolean") {
+			t.Errorf("expected boolean error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid_post_deploy_detached_flag", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{Name: "web"},
+			},
+			Extensions: map[string]interface{}{
+				"x-post-deploy-host-command-detached": "not-a-bool",
+			},
+		}
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       makeLogger(),
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil || !strings.Contains(err.Error(), "must be a boolean") {
+			t.Errorf("expected boolean error, got: %v", err)
+		}
+	})
+
+	t.Run("remove_missing_services_error_propagates", func(t *testing.T) {
+		callCount := 0
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				callCount++
+				// First calls (during DeployService) succeed; the
+				// RemoveMissingServices call fails. Use a sentinel by
+				// counting — DeployService calls containerList several
+				// times; we fail on a late call.
+				if callCount > 4 {
+					return nil, errors.New("remove missing list boom")
+				}
+				return []container.Summary{}, nil
+			},
+		}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			return ExecCommandResponse{}, nil
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{Name: "web"},
+			},
+		}
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       makeLogger(),
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Errorf("expected a list error, got: %v", err)
+		}
+	})
+
+	t.Run("project_post_deploy_command_failure", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+		}
+		mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+			// Fail only when the post-deploy script runs (sh -c echo post-fail).
+			if len(input.Args) > 0 && input.Args[0] == "-c" && strings.Contains(input.Args[1], "post-fail") {
+				return ExecCommandResponse{ExitCode: 1}, errors.New("post-deploy boom")
+			}
+			return ExecCommandResponse{}, nil
+		}
+		project := &types.Project{
+			Services: types.Services{
+				"web": types.ServiceConfig{Name: "web"},
+			},
+			Extensions: map[string]interface{}{
+				"x-post-deploy-host-command": "echo post-fail",
+			},
+		}
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       mockClient,
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       makeLogger(),
+			Project:      project,
+			ProjectName:  "test",
+		})
+		if err == nil || !strings.Contains(err.Error(), "project post-deploy host command failed") {
+			t.Errorf("expected post-deploy failure, got: %v", err)
+		}
+	})
+}
+
+func TestShouldSkipScaleDownService(t *testing.T) {
+	makeLogger := func() *command.ZerologUi {
+		var buf bytes.Buffer
+		return &command.ZerologUi{
+			StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+			OriginalFields:    nil,
+			Ui:                nil,
+			OutputIndentField: false,
+		}
+	}
+
+	t.Run("no_labels_and_no_skip_databases_returns_false", func(t *testing.T) {
+		result := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+			Container:   container.Summary{Image: "nginx"},
+			ServiceName: "web",
+			Logger:      makeLogger(),
+		})
+		if result {
+			t.Error("expected false")
+		}
+	})
+
+	t.Run("skip_label_returns_true", func(t *testing.T) {
+		result := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+			Container: container.Summary{
+				Image:  "nginx",
+				Labels: map[string]string{"com.dokku.orchestrate/skip": "true"},
+			},
+			ServiceName: "web",
+			Logger:      makeLogger(),
+		})
+		if !result {
+			t.Error("expected true")
+		}
+	})
+
+	t.Run("skip_label_false_value_falls_through", func(t *testing.T) {
+		result := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+			Container: container.Summary{
+				Image:  "nginx",
+				Labels: map[string]string{"com.dokku.orchestrate/skip": "false"},
+			},
+			ServiceName: "web",
+			Logger:      makeLogger(),
+		})
+		if result {
+			t.Error("expected false for skip=false")
+		}
+	})
+
+	t.Run("skip_databases_with_database_image_returns_true", func(t *testing.T) {
+		result := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+			Container: container.Summary{
+				Image: "postgres:16",
+			},
+			ServiceName:         "db",
+			ShouldSkipDatabases: true,
+			Logger:              makeLogger(),
+		})
+		if !result {
+			t.Error("expected true for postgres image with skip_databases=true")
+		}
+	})
+
+	t.Run("skip_databases_with_non_database_image_returns_false", func(t *testing.T) {
+		result := shouldSkipScaleDownService(ShouldSkipScaleDownServiceInput{
+			Container: container.Summary{
+				Image: "nginx:latest",
+			},
+			ServiceName:         "web",
+			ShouldSkipDatabases: true,
+			Logger:              makeLogger(),
+		})
+		if result {
+			t.Error("expected false for non-db image")
+		}
+	})
 }
