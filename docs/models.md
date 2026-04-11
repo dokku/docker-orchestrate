@@ -58,7 +58,7 @@ models:
 ```
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `model` | The model identifier to pull (e.g., `ai/smollm2`) |
 | `context_size` | Maximum context window size for the model |
 | `runtime_flags` | Additional flags passed to the model runtime |
@@ -78,7 +78,7 @@ services:
 ```
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `endpoint_var` | Environment variable name for the model's API endpoint URL |
 | `model_var` | Environment variable name for the model identifier |
 

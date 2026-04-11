@@ -42,7 +42,7 @@ services:
 ### Fields
 
 | Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
+| ------- | ------ | ---------- | --------- | ------------- |
 | `schedule` | string | Yes | | Cron expression or named schedule. See [supported expressions](#supported-cron-expressions). |
 | `timezone` | string | No | see [resolution order](#timezone-resolution-order) | IANA timezone name (e.g., `America/New_York`, `Europe/London`). |
 | `timeout` | string | No | none | Maximum duration for the task (Go duration format: `30m`, `1h`, `2h30m`). |
@@ -181,7 +181,7 @@ Example:
 ### Named Schedules
 
 | Expression | Equivalent |
-|------------|------------|
+| ------------ | ------------ |
 | `@yearly` | `0 0 1 1 *` |
 | `@annually` | `0 0 1 1 *` |
 | `@monthly` | `0 0 1 * *` |
@@ -426,7 +426,7 @@ x-cron:
 ```
 
 | Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
+| ------- | ------ | ---------- | --------- | ------------- |
 | `url` | string | Yes | | The webhook endpoint URL. |
 | `on` | string | No | `failure` | When to send notifications: `success`, `failure`, or `always`. |
 | `include-output` | bool | No | `false` | Include container stdout and stderr in the webhook payload. |
@@ -466,7 +466,7 @@ Cron containers are named with the pattern `<project>-<service>-<YYYYMMDD>-<HHMM
 Every cron container is tagged with metadata labels:
 
 | Label | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `com.dokku.orchestrate/cron` | Always `true` -- identifies the container as cron-managed. |
 | `com.dokku.orchestrate/cron-project` | The project name. |
 | `com.dokku.orchestrate/cron-service` | The service name. |

@@ -53,7 +53,7 @@ services:
 ```
 
 | Field | Default | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `parallelism` | `1` | Number of containers updated at the same time. A lower number reduces risk -- if something goes wrong, fewer containers are affected. |
 | `delay` | `10s` | Time to wait between batches. This gives the system time to stabilize after each batch of containers is replaced. |
 | `order` | `start-first` | Determines whether new containers start before or after old ones stop. See [update order](#update-order) below. |

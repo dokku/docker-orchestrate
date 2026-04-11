@@ -1,0 +1,13 @@
+---
+docs:
+  - getting-started.md
+  - command-reference.md
+  - deployment-configuration.md
+  - healthchecks.md
+  - hooks-and-scripts.md
+  - image-management.md
+  - models.md
+  - one-shot-services.md
+  - cron-scheduling.md
+  - skipping-services.md
+  - volumes.md

@@ -151,7 +151,7 @@ services:
 Each hook supports these fields:
 
 | Field | Required | Description |
-|-------|----------|-------------|
+| ------- | ---------- | ------------- |
 | `command` | Yes | The command to execute (list of strings) |
 | `user` | No | The user to run the command as |
 | `privileged` | No | Whether to run in privileged mode (default: `false`) |
@@ -246,7 +246,7 @@ services:
 All host commands are Go templates with access to context-specific variables:
 
 | Variable | Description | Available in |
-|----------|-------------|-------------|
+| ---------- | ------------- | ------------- |
 | `.ContainerID` | Full container ID | Stop commands, healthcheck commands |
 | `.ContainerShortID` | First 12 characters of the container ID | Stop commands, healthcheck commands |
 | `.ContainerIP` | Internal IP address of the container | Stop commands, healthcheck commands |
