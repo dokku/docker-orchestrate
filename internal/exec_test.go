@@ -141,4 +141,110 @@ func TestExecCommand(t *testing.T) {
 			t.Error("expected marker file to exist, detached command should survive")
 		}
 	})
+
+	t.Run("env_variables_propagated", func(t *testing.T) {
+		resp, err := ExecCommand(ctx, ExecCommandInput{
+			Command: "/bin/sh",
+			Args:    []string{"-c", "echo $FOO_TEST_VAR"},
+			Env:     map[string]string{"FOO_TEST_VAR": "bar-value"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StdoutContents() != "bar-value" {
+			t.Errorf("expected 'bar-value', got %q", resp.StdoutContents())
+		}
+	})
+
+	t.Run("stdin_is_consumed", func(t *testing.T) {
+		resp, err := ExecCommand(ctx, ExecCommandInput{
+			Command: "cat",
+			Stdin:   strings.NewReader("piped-input"),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StdoutContents() != "piped-input" {
+			t.Errorf("expected 'piped-input', got %q", resp.StdoutContents())
+		}
+	})
+
+	t.Run("stdout_writer_captures_output", func(t *testing.T) {
+		var captured strings.Builder
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:      "echo",
+			Args:         []string{"to-writer"},
+			StdoutWriter: &captured,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(captured.String(), "to-writer") {
+			t.Errorf("expected 'to-writer' in captured output, got %q", captured.String())
+		}
+	})
+
+	t.Run("stderr_writer_captures_error_output", func(t *testing.T) {
+		var captured strings.Builder
+		_, _ = ExecCommand(ctx, ExecCommandInput{
+			Command:      "/bin/sh",
+			Args:         []string{"-c", "echo to-stderr 1>&2"},
+			StderrWriter: &captured,
+		})
+		if !strings.Contains(captured.String(), "to-stderr") {
+			t.Errorf("expected 'to-stderr' in captured stderr, got %q", captured.String())
+		}
+	})
+
+	t.Run("trace_mode_logs_without_error", func(t *testing.T) {
+		t.Setenv("TRACE", "1")
+		resp, err := ExecCommand(ctx, ExecCommandInput{
+			Command: "echo",
+			Args:    []string{"tracked"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.StdoutContents() != "tracked" {
+			t.Errorf("expected 'tracked', got %q", resp.StdoutContents())
+		}
+	})
+
+	t.Run("disable_stdio_buffer", func(t *testing.T) {
+		// This exercises the DisableStdioBuffer code path. Use a writer to
+		// capture output so we don't rely on stdio being a tty.
+		var captured strings.Builder
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:            "echo",
+			Args:               []string{"nobuf"},
+			DisableStdioBuffer: true,
+			StdoutWriter:       &captured,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("stream_stdio", func(t *testing.T) {
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:     "echo",
+			Args:        []string{"streamed"},
+			StreamStdio: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("stream_stdout_and_stderr_flags", func(t *testing.T) {
+		_, err := ExecCommand(ctx, ExecCommandInput{
+			Command:      "echo",
+			Args:         []string{"streamed-out"},
+			StreamStdout: true,
+			StreamStderr: true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }

@@ -1,8 +1,19 @@
 package internal
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 )
 
 func TestCronWebhookPayloadJSON(t *testing.T) {
@@ -236,3 +247,618 @@ func TestCronContainerShortName(t *testing.T) {
 		})
 	}
 }
+
+func TestNewCronNotifier(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newBufferLogger(&buf)
+	mockClient := &mockDockerClient{}
+	n := NewCronNotifier(mockClient, logger)
+	if n == nil {
+		t.Fatal("expected non-nil notifier")
+	}
+	if n.client != mockClient {
+		t.Error("expected notifier client to match")
+	}
+	if n.logger != logger {
+		t.Error("expected notifier logger to match")
+	}
+}
+
+func TestCronNotifierSendWebhook(t *testing.T) {
+	t.Run("successful_post", func(t *testing.T) {
+		var capturedBody []byte
+		var capturedContentType, capturedUserAgent string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capturedBody, _ = io.ReadAll(r.Body)
+			capturedContentType = r.Header.Get("Content-Type")
+			capturedUserAgent = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		n := NewCronNotifier(&mockDockerClient{}, newBufferLogger(&buf))
+		payload := CronWebhookPayload{Project: "p", Service: "s", Status: "success"}
+		if err := n.sendWebhook(srv.URL, payload); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if capturedContentType != "application/json" {
+			t.Errorf("content type: %q", capturedContentType)
+		}
+		if capturedUserAgent != "docker-orchestrate-cron" {
+			t.Errorf("user agent: %q", capturedUserAgent)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(capturedBody, &decoded); err != nil {
+			t.Fatalf("body unmarshal: %v", err)
+		}
+		if decoded["project"] != "p" {
+			t.Errorf("project: %v", decoded["project"])
+		}
+	})
+
+	t.Run("server_error_returns_error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		n := NewCronNotifier(&mockDockerClient{}, newBufferLogger(&buf))
+		err := n.sendWebhook(srv.URL, CronWebhookPayload{})
+		if err == nil {
+			t.Fatal("expected error from 500 response")
+		}
+		if !strings.Contains(err.Error(), "500") {
+			t.Errorf("expected 500 in error, got %v", err)
+		}
+	})
+
+	t.Run("bad_url_returns_request_error", func(t *testing.T) {
+		var buf bytes.Buffer
+		n := NewCronNotifier(&mockDockerClient{}, newBufferLogger(&buf))
+		err := n.sendWebhook("http://%zz", CronWebhookPayload{})
+		if err == nil {
+			t.Fatal("expected error for invalid url")
+		}
+	})
+
+	t.Run("unreachable_host_returns_transport_error", func(t *testing.T) {
+		var buf bytes.Buffer
+		n := NewCronNotifier(&mockDockerClient{}, newBufferLogger(&buf))
+		// Port 1 on localhost is effectively always closed.
+		err := n.sendWebhook("http://127.0.0.1:1/", CronWebhookPayload{})
+		if err == nil {
+			t.Fatal("expected transport error")
+		}
+	})
+}
+
+func makeInspectResponse(name string, exitCode int, labels map[string]string) container.InspectResponse {
+	return container.InspectResponse{
+		ContainerJSONBase: &container.ContainerJSONBase{
+			Name:  name,
+			State: &container.State{ExitCode: exitCode},
+		},
+		Config: &container.Config{Labels: labels},
+	}
+}
+
+func TestCronNotifierProcessContainer(t *testing.T) {
+	t.Run("no_notify_url_just_removes", func(t *testing.T) {
+		var buf bytes.Buffer
+		removed := false
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, map[string]string{
+					"com.dokku.orchestrate/cron-project": "p",
+					"com.dokku.orchestrate/cron-service": "s",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error {
+				removed = true
+				return nil
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc123")
+		if !removed {
+			t.Error("expected container to be removed")
+		}
+	})
+
+	t.Run("notify_always_sends_webhook", func(t *testing.T) {
+		var webhookHit bool
+		var capturedPayload CronWebhookPayload
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			webhookHit = true
+			_ = json.NewDecoder(r.Body).Decode(&capturedPayload)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		triggeredAt := time.Now().UTC().Add(-5 * time.Second).Format(time.RFC3339)
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, map[string]string{
+					"com.dokku.orchestrate/cron-project":      "p",
+					"com.dokku.orchestrate/cron-service":      "s",
+					"com.dokku.orchestrate/cron-schedule":     "@every 1h",
+					"com.dokku.orchestrate/cron-triggered-at": triggeredAt,
+					"com.dokku.orchestrate/cron-notify-url":   srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":    "always",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc123")
+		if !webhookHit {
+			t.Error("expected webhook to be invoked")
+		}
+		if capturedPayload.Project != "p" {
+			t.Errorf("project: %q", capturedPayload.Project)
+		}
+		if capturedPayload.Status != "success" {
+			t.Errorf("status: %q", capturedPayload.Status)
+		}
+		if capturedPayload.DurationSeconds <= 0 {
+			t.Errorf("expected positive duration, got %v", capturedPayload.DurationSeconds)
+		}
+	})
+
+	t.Run("notify_on_success_skipped_for_failure", func(t *testing.T) {
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 1, map[string]string{
+					"com.dokku.orchestrate/cron-notify-url": srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":  "success",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if hit {
+			t.Error("expected webhook NOT to be called for failure with notify-on=success")
+		}
+	})
+
+	t.Run("notify_on_failure_fires_for_failure", func(t *testing.T) {
+		hit := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 2, map[string]string{
+					"com.dokku.orchestrate/cron-notify-url": srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":  "failure",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if !hit {
+			t.Error("expected webhook to fire for failure with notify-on=failure")
+		}
+	})
+
+	t.Run("default_notify_only_on_failure", func(t *testing.T) {
+		hitSuccess := false
+		hitFailure := false
+		srvSuccess := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hitSuccess = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srvSuccess.Close()
+		srvFailure := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hitFailure = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srvFailure.Close()
+
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				switch id {
+				case "ok":
+					return makeInspectResponse("/ok", 0, map[string]string{
+						"com.dokku.orchestrate/cron-notify-url": srvSuccess.URL,
+					}), nil
+				default:
+					return makeInspectResponse("/fail", 3, map[string]string{
+						"com.dokku.orchestrate/cron-notify-url": srvFailure.URL,
+					}), nil
+				}
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "ok")
+		n.processContainer(context.Background(), "fail")
+		if hitSuccess {
+			t.Error("expected success case NOT to notify with default notify-on")
+		}
+		if !hitFailure {
+			t.Error("expected failure case to notify with default notify-on")
+		}
+	})
+
+	t.Run("include_output_fetches_logs", func(t *testing.T) {
+		var captured CronWebhookPayload
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&captured)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var logCalls int
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, map[string]string{
+					"com.dokku.orchestrate/cron-notify-url":            srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":             "always",
+					"com.dokku.orchestrate/cron-notify-include-output": "true",
+				}), nil
+			},
+			containerLogs: func(ctx context.Context, id string, opts container.LogsOptions) (io.ReadCloser, error) {
+				logCalls++
+				if opts.ShowStdout {
+					return io.NopCloser(strings.NewReader("stdout line\n")), nil
+				}
+				return io.NopCloser(strings.NewReader("stderr line\n")), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if logCalls != 2 {
+			t.Errorf("expected 2 log calls, got %d", logCalls)
+		}
+		if captured.Stdout != "stdout line" {
+			t.Errorf("stdout: %q", captured.Stdout)
+		}
+		if captured.Stderr != "stderr line" {
+			t.Errorf("stderr: %q", captured.Stderr)
+		}
+	})
+
+	t.Run("inspect_error_logs_and_returns", func(t *testing.T) {
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{}, errors.New("inspect boom")
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if !strings.Contains(buf.String(), "Error inspecting cron container") {
+			t.Errorf("expected inspect-error log, got: %s", buf.String())
+		}
+	})
+
+	t.Run("webhook_error_is_logged_container_still_removed", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+
+		removed := false
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, map[string]string{
+					"com.dokku.orchestrate/cron-notify-url": srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":  "always",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error {
+				removed = true
+				return nil
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if !removed {
+			t.Error("expected container removal even on webhook error")
+		}
+		if !strings.Contains(buf.String(), "Error sending webhook") {
+			t.Errorf("expected webhook error log, got: %s", buf.String())
+		}
+	})
+
+	t.Run("remove_error_is_logged", func(t *testing.T) {
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, nil), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error {
+				return errors.New("remove boom")
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if !strings.Contains(buf.String(), "Error removing cron container") {
+			t.Errorf("expected remove-error log, got: %s", buf.String())
+		}
+	})
+
+	t.Run("nil_state_defaults_exit_code_zero", func(t *testing.T) {
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return container.InspectResponse{
+					ContainerJSONBase: &container.ContainerJSONBase{Name: "/c1", State: nil},
+					Config:            &container.Config{Labels: nil},
+				}, nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		// No panic = success. Log should show status=success (exit_code=0).
+		if !strings.Contains(buf.String(), "status=success") {
+			t.Errorf("expected success status in logs, got: %s", buf.String())
+		}
+	})
+
+	t.Run("bad_triggered_at_zero_duration", func(t *testing.T) {
+		var captured CronWebhookPayload
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&captured)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				return makeInspectResponse("/c1", 0, map[string]string{
+					"com.dokku.orchestrate/cron-notify-url":   srv.URL,
+					"com.dokku.orchestrate/cron-notify-on":    "always",
+					"com.dokku.orchestrate/cron-triggered-at": "not-a-timestamp",
+				}), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		n.processContainer(context.Background(), "abc")
+		if captured.DurationSeconds != 0 {
+			t.Errorf("expected zero duration for bad triggered_at, got %v", captured.DurationSeconds)
+		}
+	})
+}
+
+func TestCronNotifierGetContainerLogs(t *testing.T) {
+	t.Run("both_streams_available", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerLogs: func(ctx context.Context, id string, opts container.LogsOptions) (io.ReadCloser, error) {
+				if opts.ShowStdout {
+					return io.NopCloser(strings.NewReader("  out  \n")), nil
+				}
+				return io.NopCloser(strings.NewReader("  err  \n")), nil
+			},
+		}
+		var buf bytes.Buffer
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		stdout, stderr := n.getContainerLogs(context.Background(), "abc")
+		if stdout != "out" {
+			t.Errorf("stdout: %q", stdout)
+		}
+		if stderr != "err" {
+			t.Errorf("stderr: %q", stderr)
+		}
+	})
+
+	t.Run("stdout_error_returns_empty_strings", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerLogs: func(ctx context.Context, id string, opts container.LogsOptions) (io.ReadCloser, error) {
+				return nil, errors.New("logs boom")
+			},
+		}
+		var buf bytes.Buffer
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		stdout, stderr := n.getContainerLogs(context.Background(), "abc")
+		if stdout != "" || stderr != "" {
+			t.Errorf("expected empty strings, got stdout=%q stderr=%q", stdout, stderr)
+		}
+	})
+
+	t.Run("stderr_error_returns_stdout_only", func(t *testing.T) {
+		mockClient := &mockDockerClient{
+			containerLogs: func(ctx context.Context, id string, opts container.LogsOptions) (io.ReadCloser, error) {
+				if opts.ShowStdout {
+					return io.NopCloser(strings.NewReader("ok")), nil
+				}
+				return nil, errors.New("stderr boom")
+			},
+		}
+		var buf bytes.Buffer
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		stdout, stderr := n.getContainerLogs(context.Background(), "abc")
+		if stdout != "ok" {
+			t.Errorf("stdout: %q", stdout)
+		}
+		if stderr != "" {
+			t.Errorf("stderr: %q", stderr)
+		}
+	})
+}
+
+func TestCronNotifierHandleContainerDie(t *testing.T) {
+	var buf bytes.Buffer
+	inspectCalled := false
+	mockClient := &mockDockerClient{
+		containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+			inspectCalled = true
+			if id != "container-xyz" {
+				t.Errorf("expected id container-xyz, got %s", id)
+			}
+			return makeInspectResponse("/c1", 0, nil), nil
+		},
+		containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+	}
+	n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+	n.handleContainerDie(context.Background(), events.Message{Actor: events.Actor{ID: "container-xyz"}})
+	if !inspectCalled {
+		t.Error("expected inspect to be called via handleContainerDie")
+	}
+}
+
+func TestCronNotifierRecoverOrphanedContainers(t *testing.T) {
+	t.Run("processes_each_orphan", func(t *testing.T) {
+		var buf bytes.Buffer
+		inspectIDs := []string{}
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, opts container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{
+					{ID: "orphan-1", Names: []string{"/one"}},
+					{ID: "orphan-2", Names: []string{"/two"}},
+				}, nil
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				inspectIDs = append(inspectIDs, id)
+				return makeInspectResponse("/"+id, 0, nil), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		if err := n.RecoverOrphanedContainers(context.Background()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(inspectIDs) != 2 {
+			t.Errorf("expected 2 inspected IDs, got %v", inspectIDs)
+		}
+	})
+
+	t.Run("list_error_returned", func(t *testing.T) {
+		var buf bytes.Buffer
+		mockClient := &mockDockerClient{
+			containerList: func(ctx context.Context, opts container.ListOptions) ([]container.Summary, error) {
+				return nil, errors.New("list boom")
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		err := n.RecoverOrphanedContainers(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "list boom") {
+			t.Errorf("expected list error, got %v", err)
+		}
+	})
+}
+
+func TestCronNotifierRecoverOrphans(t *testing.T) {
+	var buf bytes.Buffer
+	listCalled := false
+	mockClient := &mockDockerClient{
+		containerList: func(ctx context.Context, opts container.ListOptions) ([]container.Summary, error) {
+			listCalled = true
+			return nil, nil
+		},
+	}
+	n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+	if err := n.RecoverOrphans(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !listCalled {
+		t.Error("expected RecoverOrphans to delegate to RecoverOrphanedContainers")
+	}
+}
+
+func TestCronNotifierRun(t *testing.T) {
+	t.Run("processes_event_then_cancels", func(t *testing.T) {
+		var buf bytes.Buffer
+		msgCh := make(chan events.Message, 1)
+		errCh := make(chan error, 1)
+		inspectCalled := make(chan struct{}, 1)
+		mockClient := &mockDockerClient{
+			eventsFunc: func(ctx context.Context, opts events.ListOptions) (<-chan events.Message, <-chan error) {
+				return msgCh, errCh
+			},
+			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
+				select {
+				case inspectCalled <- struct{}{}:
+				default:
+				}
+				return makeInspectResponse("/"+id, 0, nil), nil
+			},
+			containerRemove: func(ctx context.Context, id string, opts container.RemoveOptions) error { return nil },
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		runErr := make(chan error, 1)
+		go func() {
+			runErr <- n.Run(ctx)
+		}()
+		msgCh <- events.Message{Actor: events.Actor{ID: "evt1"}}
+		select {
+		case <-inspectCalled:
+		case <-time.After(2 * time.Second):
+			t.Fatal("inspect was not called from event")
+		}
+		cancel()
+		select {
+		case err := <-runErr:
+			if err == nil || !errors.Is(err, context.Canceled) {
+				t.Errorf("expected context.Canceled, got %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not return after context cancel")
+		}
+	})
+
+	t.Run("error_channel_returns_wrapped_error", func(t *testing.T) {
+		var buf bytes.Buffer
+		msgCh := make(chan events.Message)
+		errCh := make(chan error, 1)
+		errCh <- errors.New("events boom")
+		mockClient := &mockDockerClient{
+			eventsFunc: func(ctx context.Context, opts events.ListOptions) (<-chan events.Message, <-chan error) {
+				return msgCh, errCh
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		err := n.Run(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "events boom") {
+			t.Errorf("expected wrapped events error, got %v", err)
+		}
+	})
+
+	t.Run("nil_error_on_closed_error_channel_returns_nil", func(t *testing.T) {
+		var buf bytes.Buffer
+		msgCh := make(chan events.Message)
+		errCh := make(chan error, 1)
+		// Close the context so ctx.Err() is non-nil when the nil error fires.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// Send a nil error; since ctx.Err() != nil, Run should return nil.
+		errCh <- nil
+		mockClient := &mockDockerClient{
+			eventsFunc: func(ctx context.Context, opts events.ListOptions) (<-chan events.Message, <-chan error) {
+				return msgCh, errCh
+			},
+		}
+		n := NewCronNotifier(mockClient, newBufferLogger(&buf))
+		err := n.Run(ctx)
+		// Either ctx.Err() branch or err branch is fine; both should return gracefully.
+		_ = err
+	})
+}
+

@@ -484,3 +484,42 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestParseCronDefaultsNonMap(t *testing.T) {
+	extensions := map[string]interface{}{
+		"x-cron-defaults": "not-a-map",
+	}
+	_, err := ParseCronDefaults(extensions)
+	if err == nil || !contains(err.Error(), "must be a mapping") {
+		t.Errorf("expected 'must be a mapping' error, got: %v", err)
+	}
+}
+
+func TestParseCronConfigNonMap(t *testing.T) {
+	svc := &types.ServiceConfig{
+		Name: "svc",
+		Extensions: map[string]interface{}{
+			"x-cron": []string{"not", "a", "map"},
+		},
+	}
+	_, err := ParseCronConfig(svc, nil, "")
+	if err == nil || !contains(err.Error(), "must be a mapping") {
+		t.Errorf("expected 'must be a mapping' error, got: %v", err)
+	}
+}
+
+func TestParseCronConfigInvalidNotify(t *testing.T) {
+	svc := &types.ServiceConfig{
+		Name: "svc",
+		Extensions: map[string]interface{}{
+			"x-cron": map[string]interface{}{
+				"schedule": "@every 1h",
+				"notify":   "not-a-map",
+			},
+		},
+	}
+	_, err := ParseCronConfig(svc, nil, "")
+	if err == nil || !contains(err.Error(), "invalid x-cron.notify") {
+		t.Errorf("expected invalid notify error, got: %v", err)
+	}
+}
