@@ -9,13 +9,13 @@ docker orchestrate deploy [service-name] [flags]
 ## Arguments
 
 | Argument | Required | Description |
-|----------|----------|-------------|
+| ---------- | ---------- | ------------- |
 | `service-name` | No | The name of a specific service in the compose file to deploy. When omitted, all services are deployed. |
 
 ## Flags
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--build` | bool | `false` | Build images before deploying. Runs `docker compose build` before the rolling update and passes `--build` to all compose commands. Only applies to services with a `build` section. |
 | `--container-name-template` | string | `{{.ProjectName}}-{{.ServiceName}}-{{.InstanceID}}` | Go template for container names. See [template variables](#container-name-template-variables). |
 | `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Replaces the default `.env` file. Can be specified multiple times. |
@@ -100,7 +100,7 @@ docker orchestrate deploy --force
 The `--container-name-template` flag accepts a Go template with these variables:
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `.ProjectName` | The name of the compose project |
 | `.ServiceName` | The name of the service |
 | `.InstanceID` | The replica instance number |
@@ -118,7 +118,7 @@ docker orchestrate run list [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
 | `-f, --file` | string (repeatable) | `docker-compose.yaml` | Path to a Compose configuration file. Can be specified multiple times. |
 | `--profile` | string (repeatable) | | One or more profiles to enable. |
@@ -139,11 +139,11 @@ docker orchestrate run execute <service-name> [flags]
 ```
 
 | Argument | Required | Description |
-|----------|----------|-------------|
+| ---------- | ---------- | ------------- |
 | `service-name` | Yes | The name of the one-shot service to run. |
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--build` | bool | `false` | Build images before running. |
 | `--detach` | bool | `false` | Run the service in the background. |
 | `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
@@ -171,7 +171,7 @@ docker orchestrate run list-executions [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `-p, --project-name` | string | | Filter executions by project name. When omitted, all projects are shown. |
 
 ```bash
@@ -190,7 +190,7 @@ docker orchestrate cron [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--build` | bool | `false` | Build images before running cron tasks. |
 | `--config-dir` | string | | Directory to scan for projects (multi-project mode). Cannot be combined with `-f`/`-p`. |
 | `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Can be specified multiple times. |
@@ -216,7 +216,7 @@ docker orchestrate cron run [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--build` | bool | `false` | Build images before running cron tasks. |
 | `--config-dir` | string | | Directory to scan for projects (multi-project mode). Cannot be combined with `-f`/`-p`. |
 | `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Can be specified multiple times. |
@@ -248,7 +248,7 @@ docker orchestrate cron install [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--config-dir` | string | | Directory to scan for projects (multi-project mode). |
 | `--dry-run` | bool | `false` | Print generated configs without installing. |
 | `--env-file` | string (repeatable) | | Path to an environment variable file. Can be specified multiple times. |
@@ -274,7 +274,7 @@ docker orchestrate cron uninstall [flags]
 ```
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--dry-run` | bool | `false` | Print what would be removed without removing. |
 | `--include-notify` | bool | `false` | Also remove the shared notifier service (split mode only). |
 | `--init` | string | `systemd` | Init system to remove configs for: `systemd` or `runit`. |

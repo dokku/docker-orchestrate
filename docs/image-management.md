@@ -15,7 +15,7 @@ The effective pull policy is determined in this order:
 ### Supported Values
 
 | Value | Behavior |
-|-------|----------|
+| ------- | ---------- |
 | `always` | Always pull the image before deploying. A `docker compose pull` runs before the rolling update to download the image once upfront. |
 | `missing` | Only pull if the image is not already present locally. This is the default. |
 | `never` | Never pull. The image must already be available locally. |
