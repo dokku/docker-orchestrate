@@ -13,7 +13,7 @@ ifeq ($(CI_BRANCH),release)
 	VERSION ?= $(BASE_VERSION)
 	DOCKER_IMAGE_VERSION = $(VERSION)
 else
-	VERSION = $(shell echo "${BASE_VERSION}")build+$(shell git rev-parse --short HEAD)
+	VERSION ?= $(shell echo "${BASE_VERSION}")build+$(shell git rev-parse --short HEAD)
 	DOCKER_IMAGE_VERSION = $(shell echo "${BASE_VERSION}")build-$(shell git rev-parse --short HEAD)
 endif
 
@@ -70,30 +70,44 @@ $(targets): %-in-docker: .env.docker
 
 build/darwin/$(NAME)-amd64:
 	mkdir -p build/darwin
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -a -trimpath \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
 										-buildvcs=false \
 										-o build/darwin/$(NAME)-amd64
 
 build/darwin/$(NAME)-arm64:
 	mkdir -p build/darwin
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -trimpath \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
 										-buildvcs=false \
 										-o build/darwin/$(NAME)-arm64
 build/linux/$(NAME)-amd64:
 	mkdir -p build/linux
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -trimpath \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
 										-buildvcs=false \
 										-o build/linux/$(NAME)-amd64
 
 build/linux/$(NAME)-arm64:
 	mkdir -p build/linux
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -asmflags=-trimpath=/src -gcflags=-trimpath=/src \
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -trimpath \
 										-ldflags "-s -w -X main.Version=$(VERSION)" \
 										-buildvcs=false \
 										-o build/linux/$(NAME)-arm64
+
+build/windows/$(NAME)-amd64.exe:
+	mkdir -p build/windows
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -a -trimpath \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/windows/$(NAME)-amd64.exe
+
+build/windows/$(NAME)-arm64.exe:
+	mkdir -p build/windows
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -a -trimpath \
+										-ldflags "-s -w -X main.Version=$(VERSION)" \
+										-buildvcs=false \
+										-o build/windows/$(NAME)-arm64.exe
 
 build/deb/$(NAME)_$(VERSION)_amd64.deb: build/linux/$(NAME)-amd64
 	export SOURCE_DATE_EPOCH=$(shell git log -1 --format=%ct) \

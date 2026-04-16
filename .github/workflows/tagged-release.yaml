@@ -34,22 +34,25 @@ jobs:
         id: repo-name
         run: |
           echo "REPOSITORY_NAME=$(echo "${{ github.repository }}" | cut -d '/' -f 2)" >> $GITHUB_OUTPUT
-          echo "GO_VERSION=$(go mod edit -json | jq -r .Go)" >> $GITHUB_OUTPUT
 
       - name: Build binaries
-        uses: crazy-max/ghaction-xgo@v4
-        with:
-          xgo_version: latest
-          go_version: "${{ steps.repo-name.outputs.GO_VERSION }}"
-          dest: dist
-          prefix: ${{ steps.repo-name.outputs.REPOSITORY_NAME }}
-          targets: darwin/amd64,darwin/arm64,linux/arm64,linux/amd64,windows/amd64
-          v: true
-          x: false
-          race: false
-          ldflags: -s -w -X main.Version=${{ github.ref_name }}
-          buildmode: default
-          trimpath: true
+        env:
+          VERSION: ${{ github.ref_name }}
+          NAME: ${{ steps.repo-name.outputs.REPOSITORY_NAME }}
+        run: |
+          make build/darwin/${NAME}-amd64
+          make build/darwin/${NAME}-arm64
+          make build/linux/${NAME}-amd64
+          make build/linux/${NAME}-arm64
+          make build/windows/${NAME}-amd64.exe
+          make build/windows/${NAME}-arm64.exe
+          mkdir -p dist
+          cp build/darwin/${NAME}-amd64       dist/${NAME}-darwin-amd64
+          cp build/darwin/${NAME}-arm64       dist/${NAME}-darwin-arm64
+          cp build/linux/${NAME}-amd64        dist/${NAME}-linux-amd64
+          cp build/linux/${NAME}-arm64        dist/${NAME}-linux-arm64
+          cp build/windows/${NAME}-amd64.exe  dist/${NAME}-windows-amd64.exe
+          cp build/windows/${NAME}-arm64.exe  dist/${NAME}-windows-arm64.exe
 
       - name: Attest Build Provenance - darwin-amd64
         uses: actions/attest-build-provenance@v4
@@ -60,6 +63,7 @@ jobs:
             dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-linux-amd64
             dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-linux-arm64
             dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-windows-amd64.exe
+            dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-windows-arm64.exe
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -69,11 +73,6 @@ jobs:
 
       - name: Build Debian Packages
         run: |
-          mkdir -p build/linux
-
-          cp dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-linux-amd64 build/linux/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-amd64
-          cp dist/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-linux-arm64 build/linux/${{ steps.repo-name.outputs.REPOSITORY_NAME }}-arm64
-
           bundle exec make build/deb/${{ steps.repo-name.outputs.REPOSITORY_NAME }}_${{ github.ref_name }}_arm64.deb
           bundle exec make build/deb/${{ steps.repo-name.outputs.REPOSITORY_NAME }}_${{ github.ref_name }}_amd64.deb
           cp build/deb/*.deb dist/
