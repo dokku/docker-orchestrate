@@ -4,13 +4,25 @@ A Docker CLI plugin to deploy Docker Compose services with support for rolling u
 
 ## Installation
 
-Build and install as a Docker CLI plugin:
+Install with the quick install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dokku/docker-orchestrate/main/install.sh | sh
+```
+
+Or via Homebrew:
+
+```bash
+brew install dokku/repo/docker-orchestrate
+```
+
+Or build from source:
 
 ```bash
 make install
 ```
 
-Or download a pre-built binary from [GitHub Releases](https://github.com/dokku/docker-orchestrate/releases) and place it in `~/.docker/cli-plugins/`. See the [Getting Started](docs/getting-started.md#installation) guide for details.
+See the [Getting Started](docs/getting-started.md#installation) guide for all distribution channels (Debian/Ubuntu packages, binary downloads, etc.).
 
 Once installed, the plugin is available via `docker orchestrate`.
 

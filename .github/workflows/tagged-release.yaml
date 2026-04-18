@@ -79,6 +79,9 @@ jobs:
         env:
           BUNDLE_GEMFILE: .github/Gemfile
 
+      - name: Include install script
+        run: cp install.sh dist/install.sh
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:

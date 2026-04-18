@@ -8,15 +8,46 @@ docker-orchestrate fills this gap by reading the `deploy.update_config` section 
 
 ## Installation
 
-### From Source
-
-Build and install as a Docker CLI plugin:
+Once installed, the plugin is available as `docker orchestrate`:
 
 ```bash
-make install
+docker orchestrate version
 ```
 
-This builds the binary and copies it to `~/.docker/cli-plugins/docker-orchestrate`.
+### Quick Install (Linux and macOS)
+
+Use the install script to download the latest release and install it as a Docker CLI plugin:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dokku/docker-orchestrate/main/install.sh | sh
+```
+
+To install a specific version:
+
+```bash
+VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/dokku/docker-orchestrate/main/install.sh | sh
+```
+
+To install to a custom directory:
+
+```bash
+PLUGIN_DIR=/usr/libexec/docker/cli-plugins curl -fsSL https://raw.githubusercontent.com/dokku/docker-orchestrate/main/install.sh | sh
+```
+
+### Homebrew (macOS)
+
+```bash
+brew install dokku/repo/docker-orchestrate
+```
+
+### Debian/Ubuntu
+
+```bash
+sudo apt-get update
+sudo apt-get install docker-orchestrate
+```
+
+The Debian package installs the binary to both `/usr/bin/docker-orchestrate` (for direct invocation) and `/usr/libexec/docker/cli-plugins/docker-orchestrate` (for automatic Docker CLI plugin discovery).
 
 ### Binary Download
 
@@ -28,13 +59,20 @@ cp docker-orchestrate ~/.docker/cli-plugins/docker-orchestrate
 chmod +x ~/.docker/cli-plugins/docker-orchestrate
 ```
 
-### Verify Installation
+Docker looks for plugins in these directories:
 
-Once installed, the plugin is available via `docker orchestrate`:
+- `~/.docker/cli-plugins/` (per-user)
+- `/usr/libexec/docker/cli-plugins/` (system-wide)
+
+### From Source
+
+Build and install as a Docker CLI plugin:
 
 ```bash
-docker orchestrate version
+make install
 ```
+
+This builds the binary for your platform and copies it to `~/.docker/cli-plugins/docker-orchestrate`.
 
 ## Prerequisites
 
