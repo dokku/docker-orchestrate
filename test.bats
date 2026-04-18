@@ -4,9 +4,9 @@ export SYSTEM_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-x86_64) ARCH="amd64" ;;
-aarch64) ARCH="arm64" ;;
-arm64) ARCH="arm64" ;;
+  x86_64) ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+  arm64) ARCH="arm64" ;;
 esac
 export DOCKER_ORCHESTRATE="${BATS_TEST_DIRNAME}/build/${SYSTEM_NAME}/docker-orchestrate-${ARCH}"
 
@@ -1471,6 +1471,70 @@ teardown() {
   if echo "$output" | grep -q "^web"; then
     flunk "web should not be listed as a one-shot service"
   fi
+}
+
+# =====================================================
+# Docker CLI plugin tests
+# =====================================================
+
+@test "[plugin] docker-cli-plugin-metadata returns valid JSON" {
+  run "$DOCKER_ORCHESTRATE" docker-cli-plugin-metadata
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  run /bin/bash -c "'$DOCKER_ORCHESTRATE' docker-cli-plugin-metadata | jq -r .SchemaVersion"
+  assert_success
+  assert_output "0.1.0"
+
+  run /bin/bash -c "'$DOCKER_ORCHESTRATE' docker-cli-plugin-metadata | jq -e '.Vendor != \"\"'"
+  assert_success
+
+  run /bin/bash -c "'$DOCKER_ORCHESTRATE' docker-cli-plugin-metadata | jq -e '.ShortDescription != \"\"'"
+  assert_success
+}
+
+@test "[plugin] docker-cli-plugin-metadata is hidden from --help" {
+  run /bin/bash -c "'$DOCKER_ORCHESTRATE' --help 2>&1"
+  echo "output: $output"
+  echo "status: $status"
+  [[ "$output" != *"docker-cli-plugin-metadata"* ]] || flunk "expected --help not to list docker-cli-plugin-metadata"
+}
+
+@test "[plugin] docker orchestrate version" {
+  mkdir -p "$HOME/.docker/cli-plugins"
+  cp "$DOCKER_ORCHESTRATE" "$HOME/.docker/cli-plugins/docker-orchestrate"
+  chmod +x "$HOME/.docker/cli-plugins/docker-orchestrate"
+
+  run docker orchestrate version
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  [[ -n "$output" ]] || flunk "expected non-empty version output"
+
+  rm -f "$HOME/.docker/cli-plugins/docker-orchestrate"
+}
+
+@test "[plugin] docker orchestrate deploy via Docker CLI" {
+  mkdir -p "$HOME/.docker/cli-plugins"
+  cp "$DOCKER_ORCHESTRATE" "$HOME/.docker/cli-plugins/docker-orchestrate"
+  chmod +x "$HOME/.docker/cli-plugins/docker-orchestrate"
+
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/config-hash-skip"
+
+  run docker orchestrate deploy --project-name bats-plugin-deploy web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  rm -f "$HOME/.docker/cli-plugins/docker-orchestrate"
+}
+
+@test "[plugin] direct invocation without prefix still works" {
+  run "$DOCKER_ORCHESTRATE" version
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
 }
 
 @test "run list-executions shows executed containers" {
