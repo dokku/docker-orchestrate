@@ -4,9 +4,9 @@ export SYSTEM_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
-x86_64) ARCH="amd64" ;;
-aarch64) ARCH="arm64" ;;
-arm64) ARCH="arm64" ;;
+  x86_64) ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+  arm64) ARCH="arm64" ;;
 esac
 export DOCKER_ORCHESTRATE="${BATS_TEST_DIRNAME}/build/${SYSTEM_NAME}/docker-orchestrate-${ARCH}"
 
