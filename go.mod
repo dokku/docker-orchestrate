@@ -3,7 +3,7 @@ module github.com/dokku/docker-orchestrate
 go 1.26.2
 
 require (
-	github.com/compose-spec/compose-go/v2 v2.12.1
+	github.com/compose-spec/compose-go/v2 v2.13.0
 	github.com/docker/compose/v5 v5.2.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/fatih/color v1.19.0
