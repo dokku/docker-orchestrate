@@ -1,0 +1,9 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MARKER: "${TAG:-v1}"
+    image: "bats-image-prune-web:${TAG:-v1}"
+    pull_policy: build

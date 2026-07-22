@@ -11,6 +11,8 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	dockerClient "github.com/docker/docker/client"
 )
 
@@ -222,6 +224,47 @@ func TestDockerClientImageInspect(t *testing.T) {
 	}
 	if resp.ID != "sha256:deadbeef" {
 		t.Errorf("expected id sha256:deadbeef, got %q", resp.ID)
+	}
+}
+
+func TestDockerClientImageList(t *testing.T) {
+	_, client := newTestDockerWrapper(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/images/json") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("filters"); !strings.Contains(got, "com.docker.compose.project=myproject") {
+			t.Errorf("expected label filter in query, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"Id":"sha256:img1","RepoTags":["myproject-web:latest"]}]`))
+	})
+
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("label", "com.docker.compose.project=myproject")
+	images, err := client.ImageList(context.Background(), image.ListOptions{Filters: filterArgs})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(images) != 1 || images[0].ID != "sha256:img1" {
+		t.Errorf("unexpected images: %+v", images)
+	}
+}
+
+func TestDockerClientImageRemove(t *testing.T) {
+	_, client := newTestDockerWrapper(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || !strings.Contains(r.URL.Path, "/images/sha256:img1") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"Deleted":"sha256:img1"}]`))
+	})
+
+	resp, err := client.ImageRemove(context.Background(), "sha256:img1", image.RemoveOptions{PruneChildren: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp) != 1 || resp[0].Deleted != "sha256:img1" {
+		t.Errorf("unexpected delete response: %+v", resp)
 	}
 }
 

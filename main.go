@@ -65,6 +65,9 @@ func Commands(ctx context.Context, meta command.Meta) map[string]cli.CommandFact
 		"deploy": func() (cli.Command, error) {
 			return &commands.DeployCommand{Meta: meta}, nil
 		},
+		"image prune": func() (cli.Command, error) {
+			return &commands.ImagePruneCommand{Meta: meta}, nil
+		},
 		"run execute": func() (cli.Command, error) {
 			return &commands.RunExecuteCommand{Meta: meta}, nil
 		},

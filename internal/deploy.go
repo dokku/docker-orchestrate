@@ -44,6 +44,8 @@ type DeployProjectInput struct {
 	Project *types.Project
 	// ProjectName is the name of the project
 	ProjectName string
+	// PruneImages removes images left over from previous builds after deploying
+	PruneImages bool
 	// PullPolicy is the pull policy override from the CLI flag (always, missing, never)
 	PullPolicy string
 	// SkipDatabases is whether to skip deploying databases
@@ -146,6 +148,20 @@ func DeployProject(ctx context.Context, input DeployProjectInput) error {
 		ScriptType:  "project-post-deploy",
 	}); err != nil {
 		return fmt.Errorf("project post-deploy host command failed: %v", err)
+	}
+
+	// Prune images left over from previous builds. This runs after a successful
+	// deploy, so a prune failure is logged as a warning rather than failing the
+	// deploy.
+	if input.PruneImages {
+		if _, err := PruneImages(ctx, PruneImagesInput{
+			Client:      input.Client,
+			Logger:      input.Logger,
+			Project:     input.Project,
+			ProjectName: input.ProjectName,
+		}); err != nil {
+			input.Logger.Warn(fmt.Sprintf("Failed to prune images: %v", err))
+		}
 	}
 
 	return nil

@@ -22,6 +22,8 @@ type DockerClientInterface interface {
 	ContainerInspect(ctx context.Context, containerID string) (container.InspectResponse, error)
 	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
 	ImageInspect(ctx context.Context, imageID string) (image.InspectResponse, error)
+	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 	ContainerRename(ctx context.Context, containerID, newName string) error
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
@@ -101,6 +103,16 @@ func (d *DockerClient) ContainerTerminate(ctx context.Context, containerID strin
 // ImageInspect inspects an image
 func (d *DockerClient) ImageInspect(ctx context.Context, imageID string) (image.InspectResponse, error) {
 	return d.cli.ImageInspect(ctx, imageID)
+}
+
+// ImageList lists images
+func (d *DockerClient) ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
+	return d.cli.ImageList(ctx, options)
+}
+
+// ImageRemove removes an image
+func (d *DockerClient) ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+	return d.cli.ImageRemove(ctx, imageID, options)
 }
 
 // ContainerExecCreate creates an exec instance in a container
