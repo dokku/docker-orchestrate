@@ -112,10 +112,10 @@ func TestMidnightPinnedScheduleNext(t *testing.T) {
 
 func TestParseEveryInterval(t *testing.T) {
 	tests := []struct {
-		name       string
-		schedule   string
-		expectOK   bool
-		expectDur  time.Duration
+		name      string
+		schedule  string
+		expectOK  bool
+		expectDur time.Duration
 	}{
 		{
 			name:      "valid_5m",

@@ -8,14 +8,14 @@ import (
 
 func TestParseCronConfig(t *testing.T) {
 	tests := []struct {
-		name         string
-		extensions   map[string]interface{}
-		defaults     *CronDefaults
-		cliTimezone  string
-		expectNil    bool
-		expectError  bool
-		errContains  string
-		checkConfig  func(t *testing.T, config *CronConfig)
+		name        string
+		extensions  map[string]interface{}
+		defaults    *CronDefaults
+		cliTimezone string
+		expectNil   bool
+		expectError bool
+		errContains string
+		checkConfig func(t *testing.T, config *CronConfig)
 	}{
 		{
 			name: "valid_complete_config",

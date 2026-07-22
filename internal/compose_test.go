@@ -2283,7 +2283,7 @@ func TestPostStartHooksInScaleUp(t *testing.T) {
 			containerInspect: func(ctx context.Context, id string) (container.InspectResponse, error) {
 				return container.InspectResponse{
 					ContainerJSONBase: &container.ContainerJSONBase{
-						ID: id,
+						ID:    id,
 						State: &container.State{Running: true},
 					},
 					Config: &container.Config{
@@ -2529,12 +2529,12 @@ func TestPreStopHooksExecutionOrder(t *testing.T) {
 			CurrentContainers: []container.Summary{
 				{ID: "container1_to_remove", Created: 100},
 			},
-			CurrentReplicas: 1,
-			DesiredReplicas: 0,
-			Executor:        executor,
-			Logger:          logger,
-			ProjectName:     "proj",
-			ServiceName:     "web",
+			CurrentReplicas:    1,
+			DesiredReplicas:    0,
+			Executor:           executor,
+			Logger:             logger,
+			ProjectName:        "proj",
+			ServiceName:        "web",
 			PreStopHostCommand: "echo stopping",
 			PreStopCommand:     "#!/bin/sh\necho bye",
 			PreStopHooks: []composeTypes.ServiceHook{
@@ -2949,16 +2949,16 @@ func TestScaleUpContainersWaitAfterHealthy(t *testing.T) {
 		}
 
 		input := ScaleUpContainersInput{
-			Client:          mock,
-			Executor:        executor,
-			Logger:          logger,
-			ProjectName:     "proj",
-			ProjectDir:      "/tmp",
-			ServiceName:     "web",
-			ComposeFiles:    []string{"/tmp/docker-compose.yaml"},
-			Parallelism:     1,
-			CurrentReplicas: 0,
-			DesiredReplicas: 1,
+			Client:           mock,
+			Executor:         executor,
+			Logger:           logger,
+			ProjectName:      "proj",
+			ProjectDir:       "/tmp",
+			ServiceName:      "web",
+			ComposeFiles:     []string{"/tmp/docker-compose.yaml"},
+			Parallelism:      1,
+			CurrentReplicas:  0,
+			DesiredReplicas:  1,
 			WaitAfterHealthy: 4 * time.Second,
 			Sleeper: func(d time.Duration) {
 				sleeperDurations = append(sleeperDurations, d)

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	composetypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/josegonzalez/cli-skeleton/command"
 )
 

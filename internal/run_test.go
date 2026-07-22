@@ -597,8 +597,8 @@ func TestListRunExecutions(t *testing.T) {
 		containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
 			return []container.Summary{
 				{
-					Names: []string{"/test-seed-20260407-143022-ab3f"},
-					State: "exited",
+					Names:  []string{"/test-seed-20260407-143022-ab3f"},
+					State:  "exited",
 					Status: "Exited (0) 5 minutes ago",
 					Labels: map[string]string{
 						"com.dokku.orchestrate/run":              "true",

@@ -33,8 +33,8 @@ func (c *RunListExecutionsCommand) Help() string {
 func (c *RunListExecutionsCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"List all executions":               fmt.Sprintf("%s %s", appName, c.Name()),
-		"List executions for a project":     fmt.Sprintf("%s %s -p myproject", appName, c.Name()),
+		"List all executions":           fmt.Sprintf("%s %s", appName, c.Name()),
+		"List executions for a project": fmt.Sprintf("%s %s -p myproject", appName, c.Name()),
 	}
 }
 
