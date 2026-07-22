@@ -275,11 +275,11 @@ func TestDeployServiceStopGracePeriod(t *testing.T) {
 
 func TestDeployServiceCleansUpNonRunningContainers(t *testing.T) {
 	tests := []struct {
-		name               string
-		allContainers      []container.Summary
-		expectedRemovals   []string
-		removeError        error
-		expectDeployError  bool
+		name              string
+		allContainers     []container.Summary
+		expectedRemovals  []string
+		removeError       error
+		expectDeployError bool
 	}{
 		{
 			name: "removes_exited_containers",

@@ -861,4 +861,3 @@ func TestCronNotifierRun(t *testing.T) {
 		_ = err
 	})
 }
-

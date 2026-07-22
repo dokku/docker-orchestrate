@@ -43,10 +43,10 @@ func (c *RunExecuteCommand) Help() string {
 func (c *RunExecuteCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"Run a one-shot service":            fmt.Sprintf("%s %s migrate", appName, c.Name()),
-		"Run a service in detached mode":    fmt.Sprintf("%s %s --detach export", appName, c.Name()),
-		"Build images before running":       fmt.Sprintf("%s %s --build seed", appName, c.Name()),
-		"Run with a specific compose file":  fmt.Sprintf("%s %s -f docker-compose.prod.yaml -p myproject migrate", appName, c.Name()),
+		"Run a one-shot service":           fmt.Sprintf("%s %s migrate", appName, c.Name()),
+		"Run a service in detached mode":   fmt.Sprintf("%s %s --detach export", appName, c.Name()),
+		"Build images before running":      fmt.Sprintf("%s %s --build seed", appName, c.Name()),
+		"Run with a specific compose file": fmt.Sprintf("%s %s -f docker-compose.prod.yaml -p myproject migrate", appName, c.Name()),
 	}
 }
 

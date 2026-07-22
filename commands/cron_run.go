@@ -78,15 +78,15 @@ func (c *CronRunCommand) AutocompleteFlags() complete.Flags {
 		c.Meta.AutocompleteFlags(command.FlagSetClient),
 		complete.Flags{
 			"--build":           complete.PredictNothing,
-			"--config-dir":     complete.PredictDirs("*"),
-			"--env-file":       complete.PredictFiles("*"),
-			"-f":               complete.PredictFiles("*"),
-			"--file":           complete.PredictFiles("*"),
-			"-p":               complete.PredictAnything,
-			"--project-name":   complete.PredictAnything,
-			"--pull":           complete.PredictSet("always", "missing", "never"),
+			"--config-dir":      complete.PredictDirs("*"),
+			"--env-file":        complete.PredictFiles("*"),
+			"-f":                complete.PredictFiles("*"),
+			"--file":            complete.PredictFiles("*"),
+			"-p":                complete.PredictAnything,
+			"--project-name":    complete.PredictAnything,
+			"--pull":            complete.PredictSet("always", "missing", "never"),
 			"--reload-interval": complete.PredictAnything,
-			"--timezone":       complete.PredictAnything,
+			"--timezone":        complete.PredictAnything,
 		},
 	)
 }

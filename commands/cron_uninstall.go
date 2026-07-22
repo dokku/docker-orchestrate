@@ -37,11 +37,11 @@ func (c *CronUninstallCommand) Help() string {
 func (c *CronUninstallCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"Uninstall systemd service":                 fmt.Sprintf("%s %s --init systemd -p myproject", appName, c.Name()),
-		"Uninstall split systemd services":          fmt.Sprintf("%s %s --init systemd --split -p myproject", appName, c.Name()),
-		"Uninstall runit service":                   fmt.Sprintf("%s %s --init runit -p myproject", appName, c.Name()),
-		"Dry run to preview what would be removed":  fmt.Sprintf("%s %s --init systemd --dry-run -p myproject", appName, c.Name()),
-		"Uninstall including the shared notifier":   fmt.Sprintf("%s %s --init systemd --split --include-notify", appName, c.Name()),
+		"Uninstall systemd service":                fmt.Sprintf("%s %s --init systemd -p myproject", appName, c.Name()),
+		"Uninstall split systemd services":         fmt.Sprintf("%s %s --init systemd --split -p myproject", appName, c.Name()),
+		"Uninstall runit service":                  fmt.Sprintf("%s %s --init runit -p myproject", appName, c.Name()),
+		"Dry run to preview what would be removed": fmt.Sprintf("%s %s --init systemd --dry-run -p myproject", appName, c.Name()),
+		"Uninstall including the shared notifier":  fmt.Sprintf("%s %s --init systemd --split --include-notify", appName, c.Name()),
 	}
 }
 

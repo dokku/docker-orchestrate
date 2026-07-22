@@ -43,10 +43,10 @@ func (c *CronCommand) Help() string {
 func (c *CronCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"Run cron for a single project":    fmt.Sprintf("%s %s -f docker-compose.yml -p myproject", appName, c.Name()),
-		"Run cron for a config directory":  fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate", appName, c.Name()),
-		"Run cron with a custom timezone":  fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate --timezone America/New_York", appName, c.Name()),
-		"Run cron with a reload interval":  fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate --reload-interval 120s", appName, c.Name()),
+		"Run cron for a single project":   fmt.Sprintf("%s %s -f docker-compose.yml -p myproject", appName, c.Name()),
+		"Run cron for a config directory": fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate", appName, c.Name()),
+		"Run cron with a custom timezone": fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate --timezone America/New_York", appName, c.Name()),
+		"Run cron with a reload interval": fmt.Sprintf("%s %s --config-dir /etc/docker-orchestrate --reload-interval 120s", appName, c.Name()),
 	}
 }
 
@@ -80,15 +80,15 @@ func (c *CronCommand) AutocompleteFlags() complete.Flags {
 		c.Meta.AutocompleteFlags(command.FlagSetClient),
 		complete.Flags{
 			"--build":           complete.PredictNothing,
-			"--config-dir":     complete.PredictDirs("*"),
-			"--env-file":       complete.PredictFiles("*"),
-			"-f":               complete.PredictFiles("*"),
-			"--file":           complete.PredictFiles("*"),
-			"-p":               complete.PredictAnything,
-			"--project-name":   complete.PredictAnything,
-			"--pull":           complete.PredictSet("always", "missing", "never"),
+			"--config-dir":      complete.PredictDirs("*"),
+			"--env-file":        complete.PredictFiles("*"),
+			"-f":                complete.PredictFiles("*"),
+			"--file":            complete.PredictFiles("*"),
+			"-p":                complete.PredictAnything,
+			"--project-name":    complete.PredictAnything,
+			"--pull":            complete.PredictSet("always", "missing", "never"),
 			"--reload-interval": complete.PredictAnything,
-			"--timezone":       complete.PredictAnything,
+			"--timezone":        complete.PredictAnything,
 		},
 	)
 }

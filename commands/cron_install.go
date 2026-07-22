@@ -41,10 +41,10 @@ func (c *CronInstallCommand) Help() string {
 func (c *CronInstallCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"Install systemd service":                      fmt.Sprintf("%s %s --init systemd -f docker-compose.yml -p myproject", appName, c.Name()),
-		"Install split systemd services":               fmt.Sprintf("%s %s --init systemd --split -f docker-compose.yml -p myproject", appName, c.Name()),
-		"Install runit service":                        fmt.Sprintf("%s %s --init runit -f docker-compose.yml -p myproject", appName, c.Name()),
-		"Dry run to preview generated config":          fmt.Sprintf("%s %s --init systemd --dry-run -f docker-compose.yml -p myproject", appName, c.Name()),
+		"Install systemd service":                        fmt.Sprintf("%s %s --init systemd -f docker-compose.yml -p myproject", appName, c.Name()),
+		"Install split systemd services":                 fmt.Sprintf("%s %s --init systemd --split -f docker-compose.yml -p myproject", appName, c.Name()),
+		"Install runit service":                          fmt.Sprintf("%s %s --init runit -f docker-compose.yml -p myproject", appName, c.Name()),
+		"Dry run to preview generated config":            fmt.Sprintf("%s %s --init systemd --dry-run -f docker-compose.yml -p myproject", appName, c.Name()),
 		"Install systemd service for a config directory": fmt.Sprintf("%s %s --init systemd --config-dir /etc/docker-orchestrate", appName, c.Name()),
 	}
 }

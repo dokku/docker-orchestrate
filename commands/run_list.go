@@ -38,7 +38,7 @@ func (c *RunListCommand) Help() string {
 func (c *RunListCommand) Examples() map[string]string {
 	appName := os.Getenv("CLI_APP_NAME")
 	return map[string]string{
-		"List one-shot services": fmt.Sprintf("%s %s", appName, c.Name()),
+		"List one-shot services":            fmt.Sprintf("%s %s", appName, c.Name()),
 		"List with a specific compose file": fmt.Sprintf("%s %s -f docker-compose.prod.yaml", appName, c.Name()),
 	}
 }
