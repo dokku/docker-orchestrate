@@ -24,6 +24,7 @@ docker orchestrate deploy [service-name] [flags]
 | `-p, --project-name` | string | directory name | Specify an alternate project name. |
 | `--profile` | string (repeatable) | | One or more profiles to enable. Can be specified multiple times or as a comma-separated list. |
 | `--project-directory` | string | | Specify an alternate working directory. |
+| `--prune-images` | bool | `false` | Remove images left over from previous builds after a successful deploy. See [image management](image-management.md#cleaning-up-old-images). |
 | `--pull` | string | `missing` | Image pull policy: `always`, `missing`, or `never`. See [image management](image-management.md). |
 | `--replicas` | int | from compose file | Override the number of replicas. Requires a `service-name` argument. |
 | `--skip-databases` | bool | `false` | Skip deploying database services. See [skipping services](skipping-services.md#database-services). |
@@ -83,6 +84,12 @@ docker orchestrate deploy --build
 docker orchestrate deploy --build --pull never web
 ```
 
+Build and prune leftover images after deploying:
+
+```bash
+docker orchestrate deploy --build --prune-images
+```
+
 Deploy while skipping database services:
 
 ```bash
@@ -106,6 +113,32 @@ The `--container-name-template` flag accepts a Go template with these variables:
 | `.InstanceID` | The replica instance number |
 
 The default template produces names like `myproject-web-1`, `myproject-web-2`, etc.
+
+## Image
+
+### image prune
+
+Remove images left over from previous builds of a project. Keeps the image currently referenced by each service and removes every other image carrying the project's `com.docker.compose.project` label. Images still in use by a container are skipped. See [image management](image-management.md#cleaning-up-old-images).
+
+```bash
+docker orchestrate image prune [flags]
+```
+
+| Flag | Type | Default | Description |
+| ------ | ------ | --------- | ------------- |
+| `--dry-run` | bool | `false` | Report which images would be removed without removing them. |
+| `--env-file` | string (repeatable) | | Path to an environment variable file for compose file interpolation. Can be specified multiple times. |
+| `-f, --file` | string (repeatable) | `docker-compose.yaml` | Path to a Compose configuration file. Can be specified multiple times. |
+| `--profile` | string (repeatable) | | One or more profiles to enable. |
+| `--project-directory` | string | | Specify an alternate working directory. |
+| `-p, --project-name` | string | directory name | Specify an alternate project name. |
+
+```bash
+docker orchestrate image prune
+docker orchestrate image prune -p myproject
+docker orchestrate image prune --dry-run
+docker orchestrate image prune -f docker-compose.prod.yaml -p myproject
+```
 
 ## Run
 

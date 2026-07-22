@@ -3998,6 +3998,89 @@ func TestDeployProjectDeployHooks(t *testing.T) {
 	})
 }
 
+func TestDeployProjectPruneImages(t *testing.T) {
+	var buf bytes.Buffer
+	logger := &command.ZerologUi{
+		StderrLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		StdoutLogger:      zerolog.New(&buf).With().Timestamp().Logger(),
+		OriginalFields:    nil,
+		Ui:                nil,
+		OutputIndentField: false,
+	}
+
+	newMock := func(imageListCalled *bool, removed *[]string) *mockDockerClient {
+		return &mockDockerClient{
+			containerList: func(ctx context.Context, options container.ListOptions) ([]container.Summary, error) {
+				return []container.Summary{}, nil
+			},
+			imageList: func(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
+				*imageListCalled = true
+				return []image.Summary{{ID: "sha256:leftover"}}, nil
+			},
+			imageRemove: func(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+				*removed = append(*removed, imageID)
+				return []image.DeleteResponse{{Deleted: imageID}}, nil
+			},
+		}
+	}
+
+	mockExecutor := func(ctx context.Context, input ExecCommandInput) (ExecCommandResponse, error) {
+		return ExecCommandResponse{ExitCode: 0}, nil
+	}
+
+	project := &types.Project{
+		Services: types.Services{
+			"web": types.ServiceConfig{Name: "web"},
+		},
+	}
+
+	t.Run("prunes when PruneImages is true", func(t *testing.T) {
+		imageListCalled := false
+		var removed []string
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       newMock(&imageListCalled, &removed),
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			PruneImages:  true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !imageListCalled {
+			t.Error("expected image list to be queried when PruneImages is true")
+		}
+		if len(removed) != 1 || removed[0] != "sha256:leftover" {
+			t.Errorf("expected leftover image to be removed, got %v", removed)
+		}
+	})
+
+	t.Run("does not prune when PruneImages is false", func(t *testing.T) {
+		imageListCalled := false
+		var removed []string
+		err := DeployProject(context.Background(), DeployProjectInput{
+			Client:       newMock(&imageListCalled, &removed),
+			Executor:     mockExecutor,
+			ComposeFiles: []string{"/tmp/docker-compose.yaml"},
+			Logger:       logger,
+			Project:      project,
+			ProjectName:  "test",
+			PruneImages:  false,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if imageListCalled {
+			t.Error("expected no image pruning when PruneImages is false")
+		}
+		if len(removed) != 0 {
+			t.Errorf("expected no removals, got %v", removed)
+		}
+	})
+}
+
 func TestEnsureModels(t *testing.T) {
 	var buf bytes.Buffer
 	logger := &command.ZerologUi{

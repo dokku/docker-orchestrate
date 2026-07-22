@@ -27,6 +27,8 @@ type mockDockerClient struct {
 	containerLogs        func(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 	copyToContainer      func(ctx context.Context, containerID, dstPath string, content io.Reader, options container.CopyToContainerOptions) error
 	imageInspect         func(ctx context.Context, imageID string) (image.InspectResponse, error)
+	imageList            func(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	imageRemove          func(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
 	eventsFunc           func(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	renamedContainers    map[string]string
 }
@@ -121,6 +123,20 @@ func (m *mockDockerClient) ImageInspect(ctx context.Context, imageID string) (im
 		return m.imageInspect(ctx, imageID)
 	}
 	return image.InspectResponse{}, nil
+}
+
+func (m *mockDockerClient) ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
+	if m.imageList != nil {
+		return m.imageList(ctx, options)
+	}
+	return nil, nil
+}
+
+func (m *mockDockerClient) ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+	if m.imageRemove != nil {
+		return m.imageRemove(ctx, imageID, options)
+	}
+	return nil, nil
 }
 
 func (m *mockDockerClient) ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {

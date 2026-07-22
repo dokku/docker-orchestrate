@@ -26,6 +26,7 @@ type DeployCommand struct {
 	profiles              []string
 	projectDirectory      string
 	projectName           string
+	pruneImages           bool
 	pull                  string
 	replicas              int
 	skipDatabases         bool
@@ -81,6 +82,7 @@ func (c *DeployCommand) FlagSet() *flag.FlagSet {
 	f.StringSliceVarP(&c.files, "file", "f", []string{}, "one or more paths to Compose files")
 	f.StringVar(&c.projectDirectory, "project-directory", "", "the path to the project directory")
 	f.StringVarP(&c.projectName, "project-name", "p", "", "the name of the project")
+	f.BoolVar(&c.pruneImages, "prune-images", false, "remove images left over from previous builds after deploying")
 	f.StringVar(&c.pull, "pull", "", "pull image policy (always, missing, never)")
 	f.BoolVar(&c.skipDatabases, "skip-databases", false, "whether to skip deploying databases")
 	return f
@@ -98,6 +100,7 @@ func (c *DeployCommand) AutocompleteFlags() complete.Flags {
 			"--profiles":                complete.PredictAnything,
 			"--project-directory":       complete.PredictDirs("*"),
 			"--project-name":            complete.PredictAnything,
+			"--prune-images":            complete.PredictNothing,
 			"--pull":                    complete.PredictSet("always", "missing", "never"),
 			"--replicas":                complete.PredictAnything,
 			"--skip-databases":          complete.PredictNothing,
@@ -192,6 +195,7 @@ func (c *DeployCommand) Run(args []string) int {
 			Logger:                logger,
 			Project:               project,
 			ProjectName:           c.projectName,
+			PruneImages:           c.pruneImages,
 			PullPolicy:            c.pull,
 			SkipDatabases:         c.skipDatabases,
 		})
@@ -224,5 +228,17 @@ func (c *DeployCommand) Run(args []string) int {
 		c.Ui.Error(err.Error())
 		return 1
 	}
+
+	if c.pruneImages {
+		if _, err := internal.PruneImages(ctx, internal.PruneImagesInput{
+			Client:      client,
+			Logger:      logger,
+			Project:     project,
+			ProjectName: c.projectName,
+		}); err != nil {
+			logger.Warn(fmt.Sprintf("Failed to prune images: %v", err))
+		}
+	}
+
 	return 0
 }

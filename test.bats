@@ -83,6 +83,14 @@ assert_output_not_exists() {
   [[ -z "$output" ]] || flunk "expected no output, found some"
 }
 
+# reset_image_prune removes any containers and images left behind by the
+# image-prune fixture so those tests start from a clean slate and do not leak
+# images into one another.
+reset_image_prune() {
+  docker rm -f $(docker ps -aq --filter "label=com.docker.compose.project=bats-image-prune") >/dev/null 2>&1 || true
+  docker image rm -f $(docker images -aq --filter "label=com.docker.compose.project=bats-image-prune") >/dev/null 2>&1 || true
+}
+
 setup_file() {
   docker pull nginx:latest
 }
@@ -602,6 +610,97 @@ teardown() {
   run docker ps --filter "label=com.docker.compose.project=bats-pull-policy-build" --filter "status=running" -q
   echo "running containers: $output"
   assert_equal "1" "$(echo "$output" | wc -l | tr -d ' ')"
+}
+
+@test "image prune removes leftover images from previous builds" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/image-prune"
+  reset_image_prune
+
+  export TAG=v1
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  export TAG=v2
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # The previous deploy left bats-image-prune-web:v1 behind, still project-labeled
+  run docker images bats-image-prune-web:v1 -q
+  echo "v1 before prune: $output"
+  [[ -n "$output" ]] || flunk "expected the previous image to be present before prune"
+
+  run "$DOCKER_ORCHESTRATE" image prune --project-name bats-image-prune
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # The leftover image is gone
+  run docker images bats-image-prune-web:v1 -q
+  echo "v1 after prune: $output"
+  assert_equal "" "$output"
+
+  # The current image is kept
+  run docker images bats-image-prune-web:v2 -q
+  echo "v2 after prune: $output"
+  [[ -n "$output" ]] || flunk "expected the current image to be kept"
+
+  reset_image_prune
+}
+
+@test "image prune --dry-run reports without removing" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/image-prune"
+  reset_image_prune
+
+  export TAG=v1
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force web
+  assert_success
+
+  export TAG=v2
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force web
+  assert_success
+
+  run "$DOCKER_ORCHESTRATE" image prune --project-name bats-image-prune --dry-run
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+  assert_output_contains "Would remove image"
+
+  # Dry-run did not remove the leftover
+  run docker images bats-image-prune-web:v1 -q
+  echo "v1 after dry-run: $output"
+  [[ -n "$output" ]] || flunk "expected dry-run to leave the leftover image in place"
+
+  reset_image_prune
+}
+
+@test "deploy --prune-images prunes old images after a rebuild" {
+  cd "${BATS_TEST_DIRNAME}/tests/fixtures/image-prune"
+  reset_image_prune
+
+  export TAG=v1
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force web
+  assert_success
+
+  export TAG=v2
+  run "$DOCKER_ORCHESTRATE" deploy --project-name bats-image-prune --build --force --prune-images web
+  echo "output: $output"
+  echo "status: $status"
+  assert_success
+
+  # The deploy pruned the previous image
+  run docker images bats-image-prune-web:v1 -q
+  echo "v1 after prune-images deploy: $output"
+  assert_equal "" "$output"
+
+  # The current image is kept
+  run docker images bats-image-prune-web:v2 -q
+  [[ -n "$output" ]] || flunk "expected the current image to be kept"
+
+  reset_image_prune
 }
 
 @test "x-healthcheck-wait delays before treating container as healthy" {
