@@ -365,6 +365,11 @@ teardown() {
   # Kill another container with SIGKILL (non-zero exit code)
   docker kill --signal=KILL "$container_to_kill"
 
+  # docker kill returns once the signal is delivered, not once the container has
+  # exited, so block until the daemon has recorded both as stopped before
+  # asserting on container state
+  docker wait "$container_to_stop" "$container_to_kill" >/dev/null
+
   # Verify intermediate state: 1 running, 2 exited
   run docker ps --filter "label=com.docker.compose.project=bats-exited-cleanup" --filter "status=running" -q
   echo "running after stop/kill: $output"
