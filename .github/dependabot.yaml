@@ -22,3 +22,8 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      compose:
+        patterns:
+          - "github.com/compose-spec/*"
+          - "github.com/docker/compose/*"
