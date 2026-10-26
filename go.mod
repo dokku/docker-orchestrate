@@ -3,8 +3,8 @@ module github.com/dokku/docker-orchestrate
 go 1.27.1
 
 require (
-	github.com/compose-spec/compose-go/v2 v2.16.1
-	github.com/docker/compose/v5 v5.6.0
+	github.com/compose-spec/compose-go/v2 v2.16.2
+	github.com/docker/compose/v5 v5.6.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/fatih/color v1.19.0
 	github.com/josegonzalez/cli-skeleton v0.25.0
