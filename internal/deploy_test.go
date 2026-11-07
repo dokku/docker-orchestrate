@@ -12,7 +12,6 @@ import (
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/api"
-	"github.com/docker/compose/v5/pkg/compose"
 	dockerTypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -4719,7 +4718,7 @@ func TestServiceConfigStatus(t *testing.T) {
 		Image: "nginx:latest",
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
@@ -4946,7 +4945,7 @@ func TestDeployServiceSkipsUnchanged(t *testing.T) {
 		Image: "nginx:latest",
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
@@ -5023,7 +5022,7 @@ func TestDeployServiceReplicaOnlyScaleUp(t *testing.T) {
 		Image: "nginx:latest",
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
@@ -5098,7 +5097,7 @@ func TestDeployServiceReplicaOnlyScaleDown(t *testing.T) {
 		Image: "nginx:latest",
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
@@ -5196,7 +5195,7 @@ func TestDeployServiceForceOverridesHash(t *testing.T) {
 		Image: "nginx:latest",
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
@@ -5267,7 +5266,7 @@ func TestDeployServiceBuildWithoutBuildSection(t *testing.T) {
 		// No Build section
 	}
 
-	expectedHash, err := compose.ServiceHash(service)
+	expectedHash, err := serviceHash(service)
 	if err != nil {
 		t.Fatalf("failed to compute service hash: %v", err)
 	}
