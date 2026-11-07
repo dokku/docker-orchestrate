@@ -11,6 +11,7 @@ require (
 	github.com/mitchellh/cli v1.1.5
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/novln/docker-parser v1.0.0
+	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/posener/complete v1.2.3
 	github.com/robfig/cron/v3 v3.0.1
@@ -96,7 +97,6 @@ require (
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/morikuni/aec v1.1.0 // indirect
-	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect

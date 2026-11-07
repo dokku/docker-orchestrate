@@ -961,7 +961,7 @@ func serviceConfigStatus(ctx context.Context, input ServiceConfigStatusInput) (S
 	}
 
 	// Compute expected config hash from compose file
-	expectedHash, err := compose.ServiceHash(*input.Service)
+	expectedHash, err := serviceHash(*input.Service)
 	if err != nil {
 		return ServiceConfigChanged, fmt.Errorf("error computing service hash: %v", err)
 	}
