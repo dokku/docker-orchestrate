@@ -1169,6 +1169,57 @@ func TestOrderServices(t *testing.T) {
 			expectedOrder: []string{},
 			description:   "Empty project should return empty slice",
 		},
+		{
+			name: "dependency_cycle",
+			project: &types.Project{
+				Services: types.Services{
+					"a": types.ServiceConfig{
+						Name: "a",
+						DependsOn: map[string]types.ServiceDependency{
+							"b": {Required: true},
+						},
+					},
+					"b": types.ServiceConfig{
+						Name: "b",
+						DependsOn: map[string]types.ServiceDependency{
+							"a": {Required: true},
+						},
+					},
+				},
+			},
+			expectError: true,
+			description: "Circular dependencies should return an error",
+		},
+		{
+			name: "missing_required_dependency",
+			project: &types.Project{
+				Services: types.Services{
+					"api": types.ServiceConfig{
+						Name: "api",
+						DependsOn: map[string]types.ServiceDependency{
+							"db": {Required: true},
+						},
+					},
+				},
+			},
+			expectError: true,
+			description: "A required dependency missing from the project should return an error",
+		},
+		{
+			name: "missing_optional_dependency",
+			project: &types.Project{
+				Services: types.Services{
+					"api": types.ServiceConfig{
+						Name: "api",
+						DependsOn: map[string]types.ServiceDependency{
+							"db": {Required: false},
+						},
+					},
+				},
+			},
+			expectedOrder: []string{"api"},
+			description:   "An optional dependency missing from the project should be ignored",
+		},
 	}
 
 	for _, tt := range tests {

@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compose-spec/compose-go/v2/graph"
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/compose/v5/pkg/api"
-	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/docker/docker/api/types/container"
 	"github.com/josegonzalez/cli-skeleton/command"
 	parser "github.com/novln/docker-parser"
@@ -856,19 +856,16 @@ func OrderServices(ctx context.Context, input DeployProjectInput) ([]string, err
 	}
 
 	var mu sync.Mutex
-	err := compose.InDependencyOrder(ctx, input.Project, func(c context.Context, name string) error {
+	err := graph.InDependencyOrder(ctx, input.Project, func(_ context.Context, name string, _ types.ServiceConfig) error {
+		mu.Lock()
+		defer mu.Unlock()
+
 		// Skip services already added
 		if slices.Contains(dependencyOrder, name) {
 			return nil
 		}
 
-		service, err := input.Project.GetService(name)
-		if err != nil {
-			return err
-		}
-		mu.Lock()
-		dependencyOrder = append(dependencyOrder, service.Name)
-		mu.Unlock()
+		dependencyOrder = append(dependencyOrder, name)
 		return nil
 	})
 	if err != nil {
