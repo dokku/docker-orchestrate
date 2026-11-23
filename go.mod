@@ -7,7 +7,7 @@ require (
 	github.com/docker/compose/v5 v5.7.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/fatih/color v1.19.0
-	github.com/josegonzalez/cli-skeleton v0.25.0
+	github.com/josegonzalez/cli-skeleton v0.26.0
 	github.com/mitchellh/cli v1.1.5
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/novln/docker-parser v1.0.0
@@ -47,7 +47,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-shellwords v1.0.16 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
@@ -67,8 +67,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
